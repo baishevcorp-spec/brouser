@@ -59,6 +59,24 @@ export interface ProfileConfig {
    * выбором GPU (WebGL), hardwareConcurrency и deviceMemory.
    */
   fingerprintSeed?: number;
+  /**
+   * Языки профиля (P3, следующая поверхность антидетекта после P0).
+   * BCP47-тег основного языка, напр. "ru-RU". Управляет:
+   *   - navigator.language / navigator.languages;
+   *   - Accept-Language (CDP Network.setUserAgentOverride.acceptLanguage);
+   *   - Intl-локалью (Emulation.setLocaleOverride + JS-патч resolvedOptions).
+   * Пусто — выводится из timezone по таблице регионов; нет и timezone —
+   * языки не трогаем (нативные).
+   */
+  locale?: string;
+  /**
+   * Явная геолокация профиля (P3). Пусто — псевдокоординаты детерминированно
+   * выводятся из timezone (центр региона + дрожание по seed), чтобы профили
+   * одной таймзоны не светили идентичные координаты.
+   * Управляет: Emulation.setGeolocationOverride + JS-патчи
+   * navigator.geolocation и permissions.query({name:'geolocation'})='granted'.
+   */
+  geolocation?: { latitude: number; longitude: number };
 }
 
 /** Сохраняемые размеры окна (по ТЗ достаточно width/height). */
@@ -90,6 +108,8 @@ export interface ProfileState {
   hardwareConcurrency: number | null;
   /** Заданный вручную seed антидетекта (null — выводится из id автоматически). */
   fingerprintSeed: number | null;
+  /** Эффективная локаль профиля (явная либо выведенная из timezone). */
+  locale: string | null;
   /** Попадает ли профиль в первые N ячеек текущей раскладки. */
   visible: boolean;
 }

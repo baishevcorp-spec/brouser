@@ -9,6 +9,8 @@
       "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
       "timezone": "Europe/Moscow",
       "platform": "Win32",
+      "locale": "ru-RU",
+      "geolocation": { "latitude": 55.68, "longitude": 37.42 },
       "fingerprintSeed": 4821
     },
     {
@@ -20,6 +22,7 @@
       "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
       "timezone": "Europe/Moscow",
       "platform": "MacIntel",
+      "locale": "ru-RU",
       "fingerprintSeed": 7342
     }
   ],

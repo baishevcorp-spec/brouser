@@ -1,7 +1,7 @@
 # Backlog
 
 План работ по приоритетам. Пометка `[x]` — выполнено (см. коммиты `feat(antidetect)`,
-`feat(layout)`, `fix(compat)`).
+`feat(layout)`, `fix(compat)`, `fix(lifecycle)`, `feat(profiles)`, `feat(antidetect-surfaces)`).
 
 ## P0 — Блокеры продакшена
 - [x] Canvas/WebGL/Audio fingerprint noise per-profile (P0.1) — `src/main/fingerprint.ts`,
@@ -45,20 +45,31 @@
 
 ## P3 — Идеи на потом
 - [ ] Профили как отдельные процессы (`--user-data-dir`) с сеткой через window-manager
-      (полная изоляция GPU-процесса на профиль).
+      (полная изоляция GPU-процесса на профиль) — единственный путь к
+      полноценному шрифт-листу на уровне ОС.
 - [ ] Синхронизатор действий (как в Dolphin): реплей кликов/ввода во все видимые профили.
 - [ ] Импорт cookies из Opera GX / Chrome (форматы Netscape cookie.txt и DevTools-JSON).
 - [ ] Mobile-прокси rotation: смена IP по расписанию/триггеру с сохранением гео.
-- [ ] Шрифты/языки/геолокация/media devices/screen per-profile (следующие
-      поверхности антидетекта после P0).
+- [x] Шрифты/языки/геолокация/media devices/screen per-profile (следующие
+      поверхности антидетекта после P0) — языки/Intl/Accept-Language из региона
+      таймзоны (таблицы TZ_LOCALE/TZ_GEO в fingerprint.ts) или явные
+      `locale`/`geolocation` в config.json; экран из пула по семейству
+      (не меньше реального монитора); синтетические enumerateDevices;
+      шрифты — JS-уровень (measureText-шум ±0.2% + маскировка редких шрифтов
+      в document.fonts.check, только true->false). Полный шрифт-лист ОС —
+      в пункте про отдельные процессы.
 - [x] WebRTC IP leak: форсирование прокси-канала (`WebRTCIPHandlingPolicy`)
       — app-wide switch `--force-webrtc-ip-handling-policy=disable_non_proxied_udp`
       (UDP только через прокси; у профилей без прокси WebRTC деградирует —
       осознанная цена отсутствия утечки IP).
-- [ ] Обновление GREASE-строк sec-ch-ua под свежие версии Chrome
-      (сейчас фиксированный `"Not_A Brand";v="24"`).
+- [x] Обновление GREASE-строк sec-ch-ua под свежие версии Chrome — больше не
+      зашиты константой: бренд/версия/порядок вычисляются алгоритмом Chromium
+      (components/embedder_support/user_agent_utils.cc: `Not{c[m%11]}A{c[(m+1)%11]}Brand`,
+      `"8"/"99"/"24"[m%3]`, перестановка PERMS3[m%6]) по мажорной версии из UA;
+      поддержаны дочерние бренды (Google Chrome/Opera/Edge/YaBrowser) и
+      sec-ch-ua-mobile по мобильным UA.
 - [ ] MV3 `service_worker` background для расширений (ограничение Electron 33).
 - [ ] UI: drag-and-drop профилей между ячейками.
 - [x] Дублирование профиля кнопкой в шапке ячейки (P3): копируются URL/прокси/
-      расширения/UA/таймзона/платформа; id и fingerprintSeed — новые
+      расширения/UA/таймзона/платформа/локаль/геолокация; id и fingerprintSeed — новые
       (дубликат стартует чистой сессией с другим стабильным отпечатком).

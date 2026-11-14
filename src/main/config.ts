@@ -204,6 +204,19 @@ function normalizeProfile(raw: unknown): ProfileConfig | null {
     userAgent: typeof p.userAgent === 'string' ? p.userAgent.trim() : '',
     timezone: typeof p.timezone === 'string' ? p.timezone.trim() : '',
     platform: typeof p.platform === 'string' ? p.platform.trim() : '',
+    // P3: языки и геолокация (пустые/битые — не блокируют профиль,
+    // значения выводятся из timezone на этапе фингерпринта).
+    locale: typeof p.locale === 'string' ? p.locale.trim() : '',
+    geolocation:
+      typeof p.geolocation === 'object' &&
+      p.geolocation !== null &&
+      Number.isFinite((p.geolocation as { latitude?: unknown }).latitude) &&
+      Number.isFinite((p.geolocation as { longitude?: unknown }).longitude)
+        ? {
+            latitude: (p.geolocation as { latitude: number }).latitude,
+            longitude: (p.geolocation as { longitude: number }).longitude,
+          }
+        : undefined,
     hardwareConcurrency:
       typeof p.hardwareConcurrency === 'number' && p.hardwareConcurrency >= 1 && p.hardwareConcurrency <= 128
         ? Math.floor(p.hardwareConcurrency)

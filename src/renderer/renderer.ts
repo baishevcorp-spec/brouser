@@ -351,6 +351,7 @@ function cellTooltip(p: ProfileState): string {
     parts.push(`расширений: ${okCount}/${p.extensions.length}`);
   }
   if (p.timezone) parts.push(`таймзона: ${p.timezone}`);
+  if (p.locale) parts.push(`язык: ${p.locale}`);
   if (p.userAgentSet) parts.push('свой UA');
   parts.push(`fp: seed=${p.fingerprintSeed ?? 'auto'}`);
   return parts.join(' • ');

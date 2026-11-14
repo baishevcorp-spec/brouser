@@ -109,6 +109,7 @@ export class ProfileManager {
         platform: p.platform || null,
         hardwareConcurrency: p.hardwareConcurrency ?? null,
         fingerprintSeed: p.fingerprintSeed ?? null,
+        locale: p.locale || null,
         visible: i < capacity,
       };
     });
@@ -232,10 +233,11 @@ export class ProfileManager {
 
   /**
    * Дублирование профиля (P3): копируются URL, прокси, расширения, UA,
-   * таймзона, платформа и hardwareConcurrency. НЕ копируются:
+   * таймзона, платформа, hardwareConcurrency, локаль и геолокация. НЕ копируются:
    *   - id — новый (generateProfileId), т.е. отдельная persistent-сессия;
    *   - fingerprintSeed — новый id -> свой авто-seed -> ДРУГОЙ стабильный
-   *     отпечаток (клоны не должны светить одинаково для антифрода).
+   *     отпечаток (клоны не должны светить одинаково для антифрода),
+   *     в т.ч. другие координаты дрожания гео и другой набор медиа-устройств.
    * Логин/куки не переносятся: дубликат стартует с чистой сессией.
    */
   async duplicateProfile(id: string): Promise<CommandResult> {
@@ -251,6 +253,10 @@ export class ProfileManager {
       timezone: src.timezone,
       platform: src.platform,
       hardwareConcurrency: src.hardwareConcurrency,
+      locale: src.locale,
+      geolocation: src.geolocation
+        ? { latitude: src.geolocation.latitude, longitude: src.geolocation.longitude }
+        : undefined,
     };
     this.config.config.profiles.push(copy);
     this.config.save();
@@ -483,12 +489,12 @@ export class ProfileManager {
       wc.on('did-fail-load', (_e, errorCode, errorDescription, failedUrl, isMainFrame) => {
         if (isMainFrame) this.log.error(`${tag} ошибка загрузки ${failedUrl}: ${errorCode} ${errorDescription}`);
       });
-      // После каждой навигации повторно применяем часовой пояс
-      // (CDP-override привязан к процессу рендера и может слетать при смене процесса).
-      // Событие может прилететь и во время teardown — applyTimezone проверяет
-      // closing/isDestroyed и молча выходит.
+      // После каждой навигации повторно применяем таймзону/локаль/гео
+      // (CDP-override'ы привязаны к процессу рендера и могут слетать при смене процесса).
+      // Событие может прилететь и во время teardown — applyNavigationEmulation
+      // проверяет closing/isDestroyed и молча выходит.
       wc.on('did-navigate', () => {
-        void this.applyTimezone(mv);
+        void this.applyNavigationEmulation(mv);
       });
 
       // 6) Эмуляция через CDP: UA/platform, таймзона и патч отпечатка
@@ -543,9 +549,10 @@ export class ProfileManager {
   }
 
   /**
-   * CDP-эмуляция профиля: Network.setUserAgentOverride (UA + navigator.platform),
-   * Emulation.setTimezoneOverride и патч отпечатка через
-   * Page.addScriptToEvaluateOnNewDocument (основная инъекция P0.1).
+   * CDP-эмуляция профиля: Network.setUserAgentOverride (UA + navigator.platform
+   * + Accept-Language), Emulation.setTimezoneOverride / setLocaleOverride /
+   * setGeolocationOverride (P3: языки и координаты из региона таймзоны) и патч
+   * отпечатка через Page.addScriptToEvaluateOnNewDocument (основная инъекция P0.1).
    * Идемпотентность патча — на уровне скрипта (маркер на прототипе),
    * здесь дополнительно страхуемся флагом scriptAdded (сбрасывается при detach).
    */
@@ -561,7 +568,8 @@ export class ProfileManager {
     const dbg = wc.debugger;
     const alive = (): boolean => !mv.closing && !wc.isDestroyed();
 
-    const wantUa = !!profile.platform || !!profile.userAgent;
+    const locale = mv.fp.locale;
+    const wantUa = !!profile.platform || !!profile.userAgent || !!locale;
     try {
       if (!dbg.isAttached()) dbg.attach('1.3');
       if (wantUa && alive()) {
@@ -569,11 +577,25 @@ export class ProfileManager {
           userAgent: profile.userAgent || mv.session.getUserAgent(),
         };
         if (profile.platform) params.platform = profile.platform;
+        // Accept-Language в синхроне с подменёнными языками (P3).
+        if (locale) params.acceptLanguage = locale;
         await dbg.sendCommand('Network.setUserAgentOverride', params);
       }
       if (profile.timezone && alive()) {
         await dbg.sendCommand('Emulation.setTimezoneOverride', {
           timezoneId: profile.timezone,
+        });
+      }
+      // P3: локаль (Intl-форматирование + navigator.language согласованы с TZ).
+      if (locale && alive()) {
+        await dbg.sendCommand('Emulation.setLocaleOverride', { locale });
+      }
+      // P3: геолокация — координаты региона таймзоны + дрожание по seed.
+      if (mv.fp.geo && alive()) {
+        await dbg.sendCommand('Emulation.setGeolocationOverride', {
+          latitude: mv.fp.geo.latitude,
+          longitude: mv.fp.geo.longitude,
+          accuracy: mv.fp.geo.accuracy,
         });
       }
       if (alive() && !mv.scriptAdded) {
@@ -592,20 +614,40 @@ export class ProfileManager {
     }
   }
 
-  /** Повторная установка часового пояса (после навигации). */
-  private async applyTimezone(mv: ManagedView): Promise<void> {
-    if (!mv.profile.timezone || mv.closing) return;
+  /**
+   * Повторная эмуляция после навигации: таймзона, локаль и геолокация
+   * (CDP-override'ы привязаны к процессу рендера и могут слетать
+   * при смене процесса при переходе между сайтами).
+   */
+  private async applyNavigationEmulation(mv: ManagedView): Promise<void> {
+    const fp = mv.fp;
+    if (mv.closing) return;
+    if (!fp.timezone && !fp.locale && !fp.geo) return;
     try {
       const wc = mv.view.webContents;
       if (wc.isDestroyed()) return;
       const dbg = wc.debugger; // ссылка — пока таргет жив
       if (!dbg.isAttached()) dbg.attach('1.3');
       if (mv.closing || wc.isDestroyed()) return;
-      await dbg.sendCommand('Emulation.setTimezoneOverride', {
-        timezoneId: mv.profile.timezone,
-      });
+      if (fp.timezone) {
+        await dbg.sendCommand('Emulation.setTimezoneOverride', {
+          timezoneId: fp.timezone,
+        });
+      }
+      if (mv.closing || wc.isDestroyed()) return;
+      if (fp.locale) {
+        await dbg.sendCommand('Emulation.setLocaleOverride', { locale: fp.locale });
+      }
+      if (mv.closing || wc.isDestroyed()) return;
+      if (fp.geo) {
+        await dbg.sendCommand('Emulation.setGeolocationOverride', {
+          latitude: fp.geo.latitude,
+          longitude: fp.geo.longitude,
+          accuracy: fp.geo.accuracy,
+        });
+      }
     } catch (err) {
-      this.log.warn(`[${mv.profile.id}] повторный setTimezoneOverride не удался: ${String(err)}`);
+      this.log.warn(`[${mv.profile.id}] повторная эмуляция после навигации не удалась: ${String(err)}`);
     }
   }
 

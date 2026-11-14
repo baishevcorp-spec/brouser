@@ -141,6 +141,8 @@ npm run dev
       "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
       "timezone": "Europe/Moscow",
       "platform": "Win32",
+      "locale": "ru-RU",
+      "geolocation": { "latitude": 55.68, "longitude": 37.42 },
       "fingerprintSeed": 4821
     },
     {
@@ -183,6 +185,8 @@ npm run dev
 | `timezone` | строка | Часовой пояс IANA (например `Europe/Moscow`). Пусто — системный. |
 | `platform` | строка | Подмена `navigator.platform` (опционально), например `Win32`. Если не задана — выводится из `userAgent`. |
 | `hardwareConcurrency` | число | Подмена `navigator.hardwareConcurrency` (опционально), 1-128; по умолчанию выбирается по seed (4/8/12/16). |
+| `locale` | строка | Основной язык профиля, BCP47 (например `ru-RU`). Управляет `navigator.language/languages`, `Accept-Language` и Intl-локалью. Пусто — выводится из `timezone` по таблице регионов (нет и таймзоны — языки не трогаются). |
+| `geolocation` | объект | `{ "latitude": <число>, "longitude": <число> }` — явная геолокация профиля. Пусто — псевдокоординаты из региона таймзоны (центр региона + дрожание по seed; у профилей одной таймзоны координаты разные). |
 | `fingerprintSeed` | число | Seed антидетекта (опционально), 1-2147483647. Если не задан — детерминированно выводится из `id` (хеш FNV-1a): отпечаток всё равно стабильный и свой. |
 
 Файл можно править руками в любом редакторе: при старте Brouser нормализует
@@ -248,8 +252,13 @@ HTTPS-прокси.** И вторая рекомендация: **резиден
 | `navigator.hardwareConcurrency` | Выбор из 4/8/12/16 по seed (или явное `hardwareConcurrency` в конфиге) | Правдоподобные значения |
 | `navigator.deviceMemory` | 4 или 8 по seed | Chrome и так округляет до этих значений |
 | `navigator.platform` | Из явного `platform` либо из User-Agent; «случайной» платформы не бывает | Всегда согласована с UA |
-| Intl-таймзона | JS-патч `resolvedOptions().timeZone` (дубль CDP-override на уровне движка) | `Intl.DateTimeFormat().resolvedOptions().timeZone` |
-| Client Hints | При заданном UA: `sec-ch-ua`, `sec-ch-ua-mobile`, `sec-ch-ua-platform` синхронизируются с версией Chrome из UA; `Accept-CH` вырезается из ответов | Chromium не рассекречивает high-entropy хинты реальной версии Electron |
+| Intl-таймзона и локаль | JS-патч `resolvedOptions().timeZone/.locale` (дубль CDP-override на уровне движка) | `Intl.DateTimeFormat().resolvedOptions()` согласован с таймзоной и языком профиля |
+| Языки (`navigator.language/languages`, `Accept-Language`) | Локаль из `locale` либо из региона таймзоны (таблица регионов в fingerprint.ts); CDP `Network.setUserAgentOverride.acceptLanguage` + `Emulation.setLocaleOverride` + JS-патчи | `navigator.languages` вида `['ru-RU','ru','en-US','en']`; заголовок и Intl-форматирование согласованы |
+| Геолокация | Координаты из `geolocation` либо из региона таймзоны + дрожание по seed (у профилей одной таймзоны — разные); CDP `Emulation.setGeolocationOverride` + JS-патчи `getCurrentPosition`/`watchPosition`/`permissions.query` | Мгновенный фикс без запроса разрешения (история «разрешение выдано ранее»), точность 15-145 м |
+| `window.screen` + `devicePixelRatio` | Разрешение из пула семейства платформы по seed (Windows: 1366x768…3840x2160@1.5; macOS: MacBook-панели@2 / внешние@1), никогда не меньше реального монитора; `avail*` — панель задач/строка меню | Разные мониторы у профилей; `window.outer*` всегда вмещается в заявленный `screen.*` |
+| Media devices (`enumerateDevices`) | Синтетический набор по seed: 1-2 микрофона, 1-2 аудиовыхода, 1 камера (у ~20% «десктопов» отсутствует); deviceId/groupId — стабильные хеши в base64-формате Chrome | Списки устройств разные у профилей; лейблы пустые (как в реальном Chrome без разрешения) |
+| Шрифты | `measureText`-шум ±0.2% (детерминированный по «шрифт+текст»); подмножество «редких» системных шрифтов по seed помечается отсутствующим в `document.fonts.check` (только true->false) | Метрики и результаты перечисления разные у профилей; заявленные @font-face не ломаются |
+| Client Hints | При заданном UA: `sec-ch-ua`, `sec-ch-ua-mobile`, `sec-ch-ua-platform` синхронизируются с версией Chrome из UA; GREASE-бренд/версия и порядок брендов вычисляются алгоритмом Chromium для этой мажорной версии; `Accept-CH` вырезается из ответов | Chromium не рассекречивает high-entropy хинты реальной версии Electron; `sec-ch-ua` совпадает с реальным Chrome той же версии |
 | WebRTC ICE-кандидаты | Политика всего приложения `disable_non_proxied_udp`: UDP только через прокси-канал (switch `--force-webrtc-ip-handling-policy`) | Локальный/прямой публичный IP не утекает; у профилей без прокси WebRTC-кандидатов нет (деградация — осознанная цена) |
 
 **Seed.** Число `fingerprintSeed` в конфиге (или хеш id). Правила:
@@ -267,11 +276,12 @@ HTTPS-прокси.** И вторая рекомендация: **резиден
 Благодаря двойной инъекции при открытии DevTools (когда наш CDP-отладчик
 отключается, см. ниже) патч продолжает работать через preload.
 
-**DevTools и CDP.** `Emulation.setTimezoneOverride` и инъекция требуют
+**DevTools и CDP.** `Emulation.setTimezoneOverride`/`setLocaleOverride`/
+`setGeolocationOverride` и инъекция требуют
 `debugger.attach`, что конфликтует с DevTools («Debugger is already
 attached»). Brouser при открытии DevTools временно отключает свой отладчик,
 а после закрытия DevTools автоматически восстанавливает всю эмуляцию
-(UA/platform, таймзона, патч отпечатка).
+(UA/platform/Accept-Language, таймзона, локаль, гео, патч отпечатка).
 
 **Как проверить:**
 
@@ -284,16 +294,20 @@ attached»). Brouser при открытии DevTools временно откл�
 4. Откройте DevTools в ячейке — не падает; после закрытия таймзона и патч
    продолжают работать.
 5. В `app.log` при старте каждого профиля есть строка вида:
-   `[avito1] fingerprint: seed=4821, canvas=patched, webgl=ANGLE (Intel, Intel(R) UHD Graphics 630, D3D11), platform=Win32, cores=8, mem=8, ch=chrome-130`.
+   `[avito1] fingerprint: seed=4821, canvas=patched, webgl=ANGLE (Intel, Intel(R) UHD Graphics 630, D3D11), platform=Win32, cores=8, mem=8, ch=chrome-130, locale=ru-RU, geo=55.75/37.62, screen=1920x1080@1, mdev=2/2/1, fonts=patched`.
 6. Откройте `https://browserleaks.com/webrtc` в профиле с прокси — в таблице
    ICE-кандидатов не должно быть вашего реального IP (кандидаты идут через
    прокси либо отсутствуют).
+7. Языки/гео/экран/устройства: `browserleaks.com/javascript` — `navigator.languages`
+   соответствует региону таймзоны; `screen.width/height`/`devicePixelRatio` —
+   из пула по seed; гео-тест — координаты в регионе таймзоны без запроса
+   разрешения; `enumerateDevices` — синтетический набор, лейблы пустые.
 
 **Честное предупреждение.** Антидетект — не только отпечаток. Без прокси и
 с одинаковым IP даже идеальный фингерпринт не спасёт: Avito смотрит на IP
 первым делом. Плюс см. [Известные ограничения](#известные-ограничения):
-шрифты, языки, геолокация, медиа-устройства и экран не подменяются; полный
-план — в BACKLOG.md.
+шрифты подменяются только на JS-уровне (настоящий шрифт-лист на уровне ОС —
+в BACKLOG.md), AnalyserNode-поверхности AudioContext не патчатся.
 
 ## Расширения
 
@@ -463,7 +477,7 @@ Main -> renderer (события, подписки через `onProfilesUpdated
 interface AppState {
   profiles: ProfileState[];  // id, name, url, hasProxy, proxyScheme, extensions[],
                              // timezone, userAgentSet, platform, hardwareConcurrency,
-                             // fingerprintSeed, visible
+                             // fingerprintSeed, locale, visible
   layout: LayoutId;          // текущая раскладка
   theme: ThemeId;            // dark | teal | light
   capacity: number;          // число ячеек текущей раскладки
@@ -525,12 +539,14 @@ IPC с версии 0.2 (P1.1) — геометрию считает main.
   GPU-процесс Electron: абсолютной изоляции рендеринга нет (WebGL-строки
   подменяются, но физические характеристики GPU-процесса общие).
 - **Антифрод меняется.** Avito периодически обновляет антифрод: фингерпринт-
-  модуль нужно поддерживать (новые поверхности детекта, обновление
-  GREASE-строк sec-ch-ua под свежие версии Chrome) — это отдельный
-  релизный цикл, см. BACKLOG/ROADMAP.
-- **Не подменяются:** шрифты, `navigator.languages`, геолокация,
-  media devices (enumeration), `screen.*`, AudioContext
-  `AnalyserNode`-поверхности. WebRTC-кандидаты не подменяются, а
+  модуль нужно поддерживать (новые поверхности детекта) — это отдельный
+  релизный цикл, см. BACKLOG/ROADMAP. GREASE-строки `sec-ch-ua` больше
+  не зашиты константой — вычисляются алгоритмом Chromium по мажорной
+  версии из UA, так что новые версии Chrome покрываются автоматически.
+- **Не подменяются (JS-уровень вместо ОС-уровня):** полный шрифт-лист
+  (measureText-шум и `document.fonts.check`-маскировка вместо настоящего
+  перечисления системных шрифтов ОС), `AnalyserNode`-поверхности
+  AudioContext. WebRTC-кандидаты не подменяются, а
   принудительно проксируются (`disable_non_proxied_udp`, см.
   [Антидетект](#антидетект)) — у профилей без прокси WebRTC звонки/стримы
   работать не будут.

@@ -14,7 +14,9 @@
 avito1 и avito2; browserleaks.com/javascript — одинаковый UA+timezone+CH,
 разные hardwareConcurrency/GPU.
 Задачи: P0.1, P0.2, P2.4. — **антидетект-механика готова** (двойная
-инъекция, Client Hints, логирование); проверка на целевой машине — чек-лист.
+инъекция, Client Hints, логирование); языки/геолокация/экран/медиа-устройства/
+шрифты per-profile (P3) — тоже готовы (см. BACKLOG, коммит
+`feat(antidetect-surfaces)`); проверка на целевой машине — чек-лист.
 
 ## v0.4 — «Упаковано»
 Критерий: `npm run dist:win` собирает установщик, установленный Brouser
@@ -54,6 +56,16 @@ copy-assets.js уже включён в `npm run build`).
 12. Сетка пустая -> «Добавить» -> новый профиль грузит URL в первую ячейку;
     то же самое после запуска с `profiles: []` в config.json.
 13. `userData/fingerprint-preloads/` не содержит файла удалённого профиля.
+14. `browserleaks.com/javascript` в avito1/avito2: `navigator.languages`
+    соответствует региону таймзоны (ru-RU для Europe/Moscow);
+    `screen.width/height`/`devicePixelRatio`/`enumerateDevices` — разные
+    при разных seed; в app.log — `locale=…, geo=…, screen=…, mdev=…`.
+15. Гео-тест в ячейке: координаты в регионе таймзоны БЕЗ запроса разрешения;
+    `permissions.query({name:'geolocation'})` -> `granted`;
+    header `Accept-Language` совпадает с `navigator.languages[0]`.
+16. `sec-ch-ua` в сниффере запросов побайтово совпадает с реальным Chrome
+    той же мажорной версии (напр. Chrome/131 ->
+    `"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"`).
 
 Пункты 2–12 требуют GUI и живой сети — в headless-песочнице не проверяемы;
 механика, не требующая GUI, проверена unit-тестами в песочнице
