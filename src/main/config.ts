@@ -113,6 +113,7 @@ function defaultConfig(): AppConfig {
         userAgent: '',
         timezone: 'Europe/Moscow',
         platform: '',
+        fingerprintSeed: 4821,
       },
       {
         id: 'avito2',
@@ -123,6 +124,7 @@ function defaultConfig(): AppConfig {
         userAgent: '',
         timezone: 'Europe/Moscow',
         platform: '',
+        fingerprintSeed: 7342,
       },
     ],
     layout: '2x2',
@@ -170,6 +172,10 @@ function normalizeProfile(raw: unknown): ProfileConfig | null {
     hardwareConcurrency:
       typeof p.hardwareConcurrency === 'number' && p.hardwareConcurrency >= 1 && p.hardwareConcurrency <= 128
         ? Math.floor(p.hardwareConcurrency)
+        : undefined,
+    fingerprintSeed:
+      typeof p.fingerprintSeed === 'number' && Number.isFinite(p.fingerprintSeed) && p.fingerprintSeed >= 1
+        ? Math.min(2147483647, Math.floor(p.fingerprintSeed))
         : undefined,
   };
 }

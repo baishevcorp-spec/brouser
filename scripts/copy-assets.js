@@ -1,15 +1,26 @@
 /**
- * Копирует статические файлы renderer (html/css) в dist/renderer.
- * tsc не копирует ничего, кроме .js — поэтому делаем это вручную.
+ * Копирует статические файлы в dist:
+ *  - renderer (html/css);
+ *  - main/fingerprint-preload.js (CommonJS-генератор патча отпечатка:
+ *    tsc не компилирует .js, а fingerprint.ts require-ит его из dist/main).
  */
 const fs = require('node:fs');
 const path = require('node:path');
 
-const srcDir = path.join(__dirname, '..', 'src', 'renderer');
-const outDir = path.join(__dirname, '..', 'dist', 'renderer');
+const root = path.join(__dirname, '..');
 
-fs.mkdirSync(outDir, { recursive: true });
+// renderer: html/css
+const srcRenderer = path.join(root, 'src', 'renderer');
+const outRenderer = path.join(root, 'dist', 'renderer');
+fs.mkdirSync(outRenderer, { recursive: true });
 for (const file of ['index.html', 'styles.css']) {
-  fs.copyFileSync(path.join(srcDir, file), path.join(outDir, file));
-  console.log(`copied ${file} -> dist/renderer/`);
+  fs.copyFileSync(path.join(srcRenderer, file), path.join(outRenderer, file));
+  console.log(`copied renderer/${file} -> dist/renderer/`);
 }
+
+// main: fingerprint-preload.js
+const srcMain = path.join(root, 'src', 'main', 'fingerprint-preload.js');
+const outMain = path.join(root, 'dist', 'main', 'fingerprint-preload.js');
+fs.mkdirSync(path.dirname(outMain), { recursive: true });
+fs.copyFileSync(srcMain, outMain);
+console.log('copied main/fingerprint-preload.js -> dist/main/');

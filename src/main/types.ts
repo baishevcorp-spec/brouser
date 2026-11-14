@@ -52,6 +52,13 @@ export interface ProfileConfig {
   platform?: string;
   /** Подмена navigator.hardwareConcurrency (опционально). */
   hardwareConcurrency?: number;
+  /**
+   * Seed антидетект-шума профиля (P0.1). Опционально: если не задан —
+   * детерминированно выводится из id (хеш FNV-1a), так что отпечаток
+   * стабилен между перезапусками. Управляет шумом Canvas/Audio,
+   * выбором GPU (WebGL), hardwareConcurrency и deviceMemory.
+   */
+  fingerprintSeed?: number;
 }
 
 /** Сохраняемые размеры окна (по ТЗ достаточно width/height). */
@@ -81,6 +88,8 @@ export interface ProfileState {
   userAgentSet: boolean;
   platform: string | null;
   hardwareConcurrency: number | null;
+  /** Заданный вручную seed антидетекта (null — выводится из id автоматически). */
+  fingerprintSeed: number | null;
   /** Попадает ли профиль в первые N ячеек текущей раскладки. */
   visible: boolean;
 }

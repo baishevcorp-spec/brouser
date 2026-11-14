@@ -30,6 +30,7 @@ import {
 import { ConfigService, normalizeUrlInput } from './config';
 import { Logger } from './logger';
 import { parseProxy, ProxyInfo } from './proxy';
+import { applyClientHints, applyFingerprint, FingerprintSpec } from './fingerprint';
 
 /** Внутреннее описание активного представления. */
 interface ManagedView {
@@ -38,6 +39,10 @@ interface ManagedView {
   session: Session;
   proxy: ProxyInfo | null;
   extensions: { source: string; name: string | null; ok: boolean; error: string | null }[];
+  /** Спецификация антидетект-отпечатка профиля (P0.1). */
+  fp: FingerprintSpec;
+  /** Зарегистрирован ли CDP-патч на этом webContents (сбрасывается при detach). */
+  scriptAdded: boolean;
 }
 
 type EmitFn = (channel: 'profiles-updated' | 'layout-changed', payload: unknown) => void;
@@ -88,6 +93,7 @@ export class ProfileManager {
         userAgentSet: !!p.userAgent,
         platform: p.platform || null,
         hardwareConcurrency: p.hardwareConcurrency ?? null,
+        fingerprintSeed: p.fingerprintSeed ?? null,
         visible: i < capacity,
       };
     });
@@ -294,6 +300,13 @@ export class ProfileManager {
         }
       }
 
+      // 4.5) Антидетект (P0.1): preload-патч отпечатка (canvas/webgl/audio/navigator)
+      //      + Client Hints в синхроне с UA (P0.2). CDP-инъекция патча — ниже (шаг 6).
+      const fp = applyFingerprint(ses, profile, this.log);
+      applyClientHints(ses, profile, this.log);
+      // Строка для проверки консистентности через https://browserleaks.com/canvas (P2.4).
+      this.log.info(`${tag} ${fp.description}`);
+
       // Профиль могли удалить, пока грузились расширения.
       if (!this.isActive(profile.id)) {
         this.log.info(`${tag} профиль больше не активен — представление не создаётся`);
@@ -311,7 +324,7 @@ export class ProfileManager {
       this.win.contentView.addChildView(view);
       view.setBounds(this.bounds.get(profile.id) ?? rect);
 
-      const mv: ManagedView = { profile, view, session: ses, proxy, extensions };
+      const mv: ManagedView = { profile, view, session: ses, proxy, extensions, fp, scriptAdded: false };
       this.views.set(profile.id, mv);
       this.byWcId.set(view.webContents.id, profile.id);
 
@@ -327,13 +340,10 @@ export class ProfileManager {
       wc.on('did-navigate', () => {
         void this.applyTimezone(mv);
       });
-      // navigator.platform / hardwareConcurrency — инъекция после готовности DOM.
-      wc.on('dom-ready', () => {
-        this.applyNavigatorSpoof(mv);
-      });
 
-      // 6) Спуфинг отпечатка (часовой пояс + platform через CDP).
-      await this.applyFingerprint(mv);
+      // 6) Эмуляция через CDP: UA/platform, таймзона и патч отпечатка
+      //    (Page.addScriptToEvaluateOnNewDocument — до скриптов страницы).
+      await this.applyProfileEmulation(mv);
 
       // 7) Загружаем URL (или about:blank, если не задан).
       const target = profile.url && profile.url.trim() ? profile.url.trim() : 'about:blank';
@@ -347,34 +357,41 @@ export class ProfileManager {
     }
   }
 
-  /** Часовой пояс + platform через webContents.debugger (CDP). */
-  private async applyFingerprint(mv: ManagedView): Promise<void> {
+  /**
+   * CDP-эмуляция профиля: Network.setUserAgentOverride (UA + navigator.platform),
+   * Emulation.setTimezoneOverride и патч отпечатка через
+   * Page.addScriptToEvaluateOnNewDocument (основная инъекция P0.1).
+   * Идемпотентность патча — на уровне скрипта (маркер на прототипе),
+   * здесь дополнительно страхуемся флагом scriptAdded (сброс при detach).
+   */
+  private async applyProfileEmulation(mv: ManagedView): Promise<void> {
     const { profile } = mv;
     const wc = mv.view.webContents;
-    const wantTz = !!profile.timezone;
-    const wantUaOverride = !!profile.platform || !!profile.userAgent;
-    if (!wantTz && !wantUaOverride) return;
+    const wantUa = !!profile.platform || !!profile.userAgent;
     try {
       if (!wc.debugger.isAttached()) wc.debugger.attach('1.3');
-      // Network.setUserAgentOverride задаёт и User-Agent, и navigator.platform
-      // до выполнения скриптов страницы.
-      if (wantUaOverride) {
+      if (wantUa) {
         const params: Record<string, unknown> = {
           userAgent: profile.userAgent || mv.session.getUserAgent(),
         };
         if (profile.platform) params.platform = profile.platform;
         await wc.debugger.sendCommand('Network.setUserAgentOverride', params);
       }
-      if (wantTz) {
+      if (profile.timezone) {
         await wc.debugger.sendCommand('Emulation.setTimezoneOverride', {
           timezoneId: profile.timezone,
         });
       }
-      this.log.info(
-        `${profile.id}: отпечаток применён (tz=${profile.timezone || 'default'}, platform=${profile.platform || 'default'})`,
-      );
+      if (!mv.scriptAdded) {
+        await wc.debugger.sendCommand('Page.addScriptToEvaluateOnNewDocument', {
+          source: mv.fp.source,
+        });
+        mv.scriptAdded = true;
+      }
     } catch (err) {
-      this.log.warn(`${profile.id}: не удалось применить отпечаток через CDP: ${String(err)} (не критично)`);
+      this.log.warn(
+        `[${profile.id}] CDP-эмуляция не удалась (продолжаем, preload-патч подстрахует): ${String(err)}`,
+      );
     }
   }
 
@@ -391,14 +408,6 @@ export class ProfileManager {
     } catch (err) {
       this.log.warn(`[${mv.profile.id}] повторный setTimezoneOverride не удался: ${String(err)}`);
     }
-  }
-
-  /** Подмена navigator.platform / hardwareConcurrency инъекцией скрипта. */
-  private applyNavigatorSpoof(mv: ManagedView): void {
-    const { platform, hardwareConcurrency } = mv.profile;
-    if (!platform && !hardwareConcurrency) return;
-    const script = `(function(){try{${platform ? `Object.defineProperty(window.navigator,'platform',{get:()=>${JSON.stringify(platform)},configurable:true});` : ''}${hardwareConcurrency ? `Object.defineProperty(window.navigator,'hardwareConcurrency',{get:()=>${hardwareConcurrency},configurable:true});` : ''}}catch(e){}})();`;
-    mv.view.webContents.executeJavaScript(script).catch(() => undefined);
   }
 
   /**
