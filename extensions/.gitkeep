@@ -1,0 +1,3 @@
+# Папка для распакованных расширений Chrome.
+# Положите сюда свои расширения (папки с manifest.json) и укажите путь в config.json,
+# например: "extensions": ["./extensions/my-extension"].

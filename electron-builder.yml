@@ -1,0 +1,51 @@
+# Конфигурация electron-builder для Brouser.
+# Сборка: npm run dist:win (NSIS), npm run dist:linux (AppImage), npm run dist:mac (dmg, опционально).
+appId: com.baishevcorp.brouser
+productName: Brouser
+copyright: BaishevCorp
+
+directories:
+  output: release
+  buildResources: assets
+
+# В установщик попадает только скомпилированный код + package.json.
+files:
+  - dist/**/*
+  - package.json
+
+# Папка extensions упаковывается в resources/extensions,
+# чтобы в упакованном приложении работали относительные пути расширений.
+extraResources:
+  - from: extensions
+    to: extensions
+    filter:
+      - "**/*"
+      - "!.gitkeep"
+
+asar: true
+icon: assets/icon.png
+
+win:
+  target:
+    - nsis
+  icon: assets/icon.png
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  shortcutName: Brouser
+
+linux:
+  target:
+    - AppImage
+  category: Network
+  maintainer: BaishevCorp
+  icon: assets/icon.png
+
+mac:
+  target:
+    - dmg
+  category: public.app-category.productivity
+  icon: assets/icon.png

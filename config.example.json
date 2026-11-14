@@ -1,0 +1,25 @@
+{
+  "profiles": [
+    {
+      "id": "avito1",
+      "name": "Avito Account 1",
+      "url": "https://www.avito.ru",
+      "proxy": "http://user:pass@185.12.34.56:8080",
+      "extensions": ["./extensions/avito-helper"],
+      "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+      "timezone": "Europe/Moscow"
+    },
+    {
+      "id": "avito2",
+      "name": "Avito Account 2",
+      "url": "https://www.avito.ru",
+      "proxy": "socks5://192.0.2.10:9050",
+      "extensions": [],
+      "userAgent": "",
+      "timezone": "Europe/Moscow"
+    }
+  ],
+  "layout": "2x2",
+  "theme": "dark",
+  "windowBounds": { "width": 1600, "height": 900 }
+}
