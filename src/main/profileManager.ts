@@ -268,8 +268,31 @@ export class ProfileManager {
       this.log.warn(`devtools: представление не найдено (${id})`);
       return;
     }
+    const wc = mv.view.webContents;
+
+    // P2.1: CDP-отладчик (эмуляция) конфликтует с DevTools —
+    // «Debugger is already attached». Отключаем наш отладчик перед открытием;
+    // регистрация Page.addScriptToEvaluateOnNewDocument умирает вместе с сессией,
+    // поэтому сбрасываем флаг — после закрытия DevTools всё переустановится.
     try {
-      mv.view.webContents.openDevTools({ mode: 'detach' });
+      if (wc.debugger.isAttached()) {
+        wc.debugger.detach();
+        mv.scriptAdded = false;
+        this.log.info(`[${id}] CDP-отладчик временно отключён для DevTools`);
+      }
+    } catch (err) {
+      this.log.warn(`[${id}] detach перед DevTools не удался: ${String(err)}`);
+    }
+
+    // После закрытия DevTools восстанавливаем эмуляцию:
+    // UA/platform, таймзону и патч отпечатка (Page.addScript...).
+    wc.once('devtools-closed', () => {
+      this.log.info(`[${id}] DevTools закрыт — восстанавливаю CDP-эмуляцию`);
+      void this.applyProfileEmulation(mv);
+    });
+
+    try {
+      wc.openDevTools({ mode: 'detach' });
     } catch (err) {
       this.log.error(`[${id}] openDevTools failed: ${String(err)}`);
     }
@@ -321,6 +344,8 @@ export class ProfileManager {
       }
 
       // 3) Расширения (распакованные папки). Ошибка одного не валит остальные.
+      //    P2.2: на macOS расширения из бандла копируются в userData
+      //    (Gatekeeper блокирует loadExtension из app path).
       const extensions: ManagedView['extensions'] = [];
       for (const source of profile.extensions ?? []) {
         const abs = this.config.resolveExtensionPath(source);
@@ -329,8 +354,9 @@ export class ProfileManager {
           this.log.error(`${tag} расширение не найдено: ${source}`);
           continue;
         }
+        const loadPath = this.config.prepareExtensionForLoad(abs, this.log);
         try {
-          const loaded = await ses.loadExtension(abs);
+          const loaded = await ses.loadExtension(loadPath);
           extensions.push({ source, name: loaded.name, ok: true, error: null });
           this.log.info(`${tag} расширение загружено: ${loaded.name} (${source})`);
         } catch (err) {
@@ -486,7 +512,9 @@ export class ProfileManager {
   }
 
   /**
-   * Аутентификация прокси: login/password из URL прокси профиля.
+   * Аутентификация прокси: login/password из URL прокси профиля (P2.3 —
+   * креды отдаются ТОЛЬКО на хост прокси этого профиля; иначе чужой
+   * запрос мог бы перехватить учётные данные).
    * Вызывается Chromium'ом при первом 407-вызове от прокси-сервера.
    */
   private handleLogin = (
@@ -501,10 +529,18 @@ export class ProfileManager {
       const wcId = webContents?.id;
       const profileId = wcId !== undefined ? this.byWcId.get(wcId) : undefined;
       const mv = profileId ? this.views.get(profileId) : undefined;
-      if (mv?.proxy?.username) {
+      const creds = mv?.proxy;
+      if (creds?.username === undefined || !creds.host) return;
+      if (authInfo.host === creds.host) {
         event.preventDefault();
-        callback(mv.proxy.username, mv.proxy.password ?? '');
-        this.log.info(`[${profileId}] учётные данные прокси предоставлены`);
+        callback(creds.username, creds.password ?? '');
+        this.log.info(`[${profileId}] учётные данные прокси предоставлены (${creds.host})`);
+      } else {
+        // Хост запроса не совпадает с прокси профиля: креды не отдаём —
+        // это может быть подставной запрос или прокси другого профиля.
+        this.log.warn(
+          `[${profileId}] запрос прокси-авторизации для ${authInfo.host} не совпадает с прокси профиля (${creds.host}) — креды не отправлены`,
+        );
       }
     } catch (err) {
       this.log.error(`login handler error: ${String(err)}`);

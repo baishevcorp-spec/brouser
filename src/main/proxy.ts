@@ -17,6 +17,8 @@ export interface ProxyInfo {
   rules: string | null;
   /** Схема без учётных данных — для тултипов в UI. */
   scheme: string | null;
+  /** Хост прокси (без порта) — для фильтра кредов в app('login') (P2.3). */
+  host: string | null;
   username?: string;
   password?: string;
 }
@@ -38,6 +40,7 @@ export function parseProxy(input: string): ProxyInfo | null {
       const info: ProxyInfo = {
         rules: `${scheme}://${u.hostname}:${port}`,
         scheme,
+        host: u.hostname,
       };
       if (u.username) {
         info.username = safeDecode(u.username);
@@ -46,12 +49,14 @@ export function parseProxy(input: string): ProxyInfo | null {
       return info;
     } catch {
       // Странная строка — отдаём как есть, Chromium сам разберётся.
-      return { rules: raw, scheme: null };
+      return { rules: raw, scheme: null, host: null };
     }
   }
 
   // Формат без схемы: host:port или пер-протокольные правила Chromium.
-  return { rules: raw, scheme: null };
+  // Хост достаём, если строка выглядит как host:port (для фильтра кредов).
+  const hostPort = /^([a-zA-Z0-9._-]+):(\d+)$/.exec(raw);
+  return { rules: raw, scheme: null, host: hostPort ? (hostPort[1] as string) : null };
 }
 
 function safeDecode(v: string): string {

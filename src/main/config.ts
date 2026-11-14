@@ -80,6 +80,41 @@ export class ConfigService {
   }
 
   /**
+   * P2.2: на macOS ses.loadExtension() изнутри app-бандла блокируется
+   * Gatekeeper/quarantine-атрибутами. Поэтому на darwin расширения,
+   * лежащие внутри приложения (app.getAppPath() / resourcesPath),
+   * копируем в userData/extensions/<имя>-<хеш> и грузим оттуда.
+   * Windows/Linux грузят напрямую.
+   */
+  prepareExtensionForLoad(abs: string, log: Logger): string {
+    if (process.platform !== 'darwin') return abs;
+    const insideBundle =
+      abs.startsWith(app.getAppPath() + path.sep) ||
+      (app.isPackaged ? abs.startsWith(process.resourcesPath + path.sep) : false);
+    if (!insideBundle) return abs;
+
+    // Стабильный суффикс из пути: коллизии одинаковых имён исключены.
+    let hash = 0x811c9dc5;
+    for (let i = 0; i < abs.length; i++) {
+      hash ^= abs.charCodeAt(i);
+      hash = Math.imul(hash, 0x01000193);
+    }
+    const name = `${path.basename(abs)}-${(hash >>> 0).toString(16)}`;
+    const target = path.join(this.configDir, 'extensions', name);
+    try {
+      if (!fs.existsSync(path.join(target, 'manifest.json'))) {
+        fs.rmSync(target, { recursive: true, force: true });
+        fs.cpSync(abs, target, { recursive: true });
+        log.info(`расширение скопировано в userData (macOS/Gatekeeper): ${name}`);
+      }
+      return target;
+    } catch (err) {
+      log.warn(`не удалось скопировать расширение в userData (${abs}): ${String(err)} — пробую оригинальный путь`);
+      return abs;
+    }
+  }
+
+  /**
    * Уникальный id вида avito1, avito2... либо слаг из имени
    * (только латиница/цифры/дефис: id попадает в имя partition).
    */
