@@ -16,7 +16,7 @@ const DEFAULT_URL = 'https://www.avito.ru';
 export class ConfigService {
   readonly configDir: string;
   readonly configPath: string;
-  config: AppConfig;
+  config!: AppConfig;
 
   constructor(private log: Logger) {
     this.configDir = app.getPath('userData');
@@ -159,7 +159,7 @@ function normalizeProfile(raw: unknown): ProfileConfig | null {
   return {
     id,
     name: typeof p.name === 'string' && p.name.trim() ? p.name.trim() : id,
-    url: normalizeUrl(typeof p.url === 'string' ? p.url : ''),
+    url: normalizeUrlInput(typeof p.url === 'string' ? p.url : ''),
     proxy: typeof p.proxy === 'string' ? p.proxy.trim() : '',
     extensions: Array.isArray(p.extensions)
       ? p.extensions.filter((e): e is string => typeof e === 'string' && e.trim() !== '').map((e) => e.trim())

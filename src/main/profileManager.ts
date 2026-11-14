@@ -15,7 +15,7 @@
  *  - при смене раскладки лишние представления уничтожаются, недостающие создаются;
  *  - сессия каждого профиля persistent (куки/кэш/LocalStorage/IndexedDB на диске).
  */
-import { app, BrowserWindow, Rectangle, Session, WebContentsView } from 'electron';
+import { app, BrowserWindow, Rectangle, Session, session, WebContentsView } from 'electron';
 import {
   AppState,
   CommandResult,
