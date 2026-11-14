@@ -42,6 +42,7 @@ const api: BrouserApi = {
   duplicateProfile: (id) => ipcRenderer.invoke('profile:duplicate', id),
   importCookies: (profileId, input) => ipcRenderer.invoke('cookies:import', profileId, input),
   pickCookieFile: () => ipcRenderer.invoke('cookies:pick-file'),
+  setInputSync: (enabled) => ipcRenderer.invoke('sync:set', enabled),
   setLayout: (layout) => ipcRenderer.invoke('layout:set', layout),
   setTheme: (theme) => ipcRenderer.invoke('theme:set', theme),
   reloadAll: () => ipcRenderer.invoke('views:reload-all'),

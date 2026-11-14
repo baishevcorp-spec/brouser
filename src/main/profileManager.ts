@@ -43,6 +43,7 @@ import {
   toCookieSetDetails,
 } from './cookies';
 import { Cell, computeCells, logPanelReserve, PARKED } from './layout';
+import { InputSync } from './sync';
 
 /** Внутреннее описание активного представления. */
 interface ManagedView {
@@ -81,8 +82,12 @@ export class ProfileManager {
   private layoutReadyFlag = false;
   /** Панель журнала открыта (резервируем место справа). */
   private logPanelOpen = false;
+  /** Синхронизатор действий (P3): реплей ввода между видимыми ячейками. */
+  private inputSync: InputSync;
 
   constructor(private config: ConfigService, private log: Logger) {
+    // Инициализация ДО подписок: inputSync нуждается в логгере.
+    this.inputSync = new InputSync(this.log);
     // Аутентификация прокси (login/password из URL) — единый обработчик на app.
     app.on('login', this.handleLogin);
   }
@@ -128,6 +133,7 @@ export class ProfileManager {
       theme: this.config.config.theme ?? 'dark',
       capacity,
       logs: this.log.getRecent(),
+      inputSync: this.inputSync.isEnabled(),
     };
   }
 
@@ -191,6 +197,9 @@ export class ProfileManager {
     } catch (err) {
       this.log.error(`recomputeLayout: ${String(err)}`);
     }
+    // Состав видимых ячеек мог измениться — пересинхронизировать участников
+    // (no-op при выключенном синхронизаторе).
+    this.syncParticipants();
   }
 
   // ------------------------------------------------------------------
@@ -403,6 +412,45 @@ export class ProfileManager {
     return { ok: true };
   }
 
+  // ------------------------------------------------------------------
+  // Синхронизатор действий (P3)
+  // ------------------------------------------------------------------
+
+  /**
+   * Включить/выключить реплей ввода между видимыми ячейками.
+   * Участники пересчитываются при каждом изменении сетки
+   * (syncParticipants из recomputeLayout/createView/destroyView).
+   */
+  async setInputSync(on: boolean): Promise<CommandResult> {
+    try {
+      await this.inputSync.setEnabled(on, this.visibleSyncTargets());
+      this.notify();
+      return { ok: true };
+    } catch (err) {
+      this.log.error(`синхронизатор: ошибка переключения: ${String(err)}`);
+      return { ok: false, error: String(err) };
+    }
+  }
+
+  /** Видимые представления как цели синхронизации (первые N, живые). */
+  private visibleSyncTargets(): { profileId: string; wc: Electron.WebContents }[] {
+    const cap = this.capacity();
+    const out: { profileId: string; wc: Electron.WebContents }[] = [];
+    this.config.config.profiles.slice(0, cap).forEach((p) => {
+      const mv = this.views.get(p.id);
+      if (mv && !mv.closing && !mv.view.webContents.isDestroyed()) {
+        out.push({ profileId: p.id, wc: mv.view.webContents });
+      }
+    });
+    return out;
+  }
+
+  /** Пересинхронизировать участников (изменения сетки/профилей). */
+  private syncParticipants(): void {
+    if (!this.inputSync.isEnabled()) return;
+    void this.inputSync.setParticipants(this.visibleSyncTargets());
+  }
+
   reloadAll(): void {
     for (const mv of this.views.values()) {
       if (mv.closing) continue;
@@ -471,7 +519,11 @@ export class ProfileManager {
     wc.once('devtools-closed', () => {
       if (mv.closing || wc.isDestroyed()) return;
       this.log.info(`[${id}] DevTools закрыт — восстанавливаю CDP-эмуляцию`);
-      void this.applyProfileEmulation(mv);
+      void this.applyProfileEmulation(mv).then(() => {
+        // Detach debugger'а убил и захват синхронизатора — переустановка
+        // вслед за эмуляцией (debugger уже прикреплён).
+        this.inputSync.reinstall(id, wc);
+      });
     });
 
     try {
@@ -633,6 +685,9 @@ export class ProfileManager {
       this.positionView(profile.id, rect);
 
       this.notify();
+      // Представление создано и стало видимым — вписать его в синхронизатор
+      // (no-op при выключенном).
+      this.syncParticipants();
     } catch (err) {
       this.log.error(`${tag} критическая ошибка создания представления: ${String(err)}`);
     } finally {
@@ -809,6 +864,10 @@ export class ProfileManager {
     // этого представления обязаны молчать (см. closing в ManagedView).
     mv.closing = true;
 
+    // Синхронизатор забывает ячейку ДО каких-либо действий с webContents:
+    // listener снимается на живом объекте, окно подавления гаснет.
+    this.inputSync.forgetProfile(id);
+
     // webContents берём ДО любых действий и один раз: после close() доступ
     // к view.webContents запрещён (Windows/Electron 33: crashpad).
     let wc: Electron.WebContents | null = null;
@@ -855,6 +914,9 @@ export class ProfileManager {
 
   /** Полная остановка: вызывается при закрытии окна (все сессии завершаются корректно). */
   destroyAll(): void {
+    // Синхронизатор гасим ПЕРВЫМ: снимаем listener'ы с debugger'ов, пока
+    // webContents ещё живы (урок P2.5: после close() их трогать нельзя).
+    void this.inputSync.setEnabled(false, []);
     for (const id of [...this.views.keys()]) this.destroyView(id);
     this.byWcId.clear();
     this.pendingViews.clear();

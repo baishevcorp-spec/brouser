@@ -121,6 +121,8 @@ export interface AppState {
   theme: ThemeId;
   capacity: number;
   logs: LogEntry[];
+  /** Синхронизатор действий включён (P3). */
+  inputSync: boolean;
 }
 
 export type LogLevel = 'info' | 'warn' | 'error';
@@ -239,6 +241,8 @@ export interface BrouserApi {
   importCookies(profileId: string, input: CookieImportInput): Promise<CookieImportResult>;
   /** Диалог выбора файла cookies.txt/.json и его чтение (≤ 10 МБ). */
   pickCookieFile(): Promise<FilePickResult>;
+  /** Синхронизатор действий (P3): реплей кликов/ввода между видимыми ячейками. */
+  setInputSync(enabled: boolean): Promise<CommandResult>;
   setLayout(layout: LayoutId): Promise<CommandResult>;
   reloadAll(): Promise<void>;
   reloadView(id: string): Promise<void>;

@@ -197,6 +197,11 @@ function bootstrap(): void {
     );
     ipcMain.handle('theme:set', (_e, theme: ThemeId): CommandResult => manager!.setTheme(theme));
 
+    // Синхронизатор действий (P3): реплей ввода между видимыми ячейками.
+    ipcMain.handle('sync:set', (_e, on: boolean): Promise<CommandResult> =>
+      manager!.setInputSync(!!on),
+    );
+
     ipcMain.handle('views:reload-all', (): void => manager!.reloadAll());
     ipcMain.handle('view:reload', (_e, id: string): void => manager!.reloadView(id));
     ipcMain.handle('view:devtools', (_e, id: string): void => manager!.openDevTools(id));

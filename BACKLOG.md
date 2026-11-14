@@ -1,7 +1,8 @@
 # Backlog
 
 План работ по приоритетам. Пометка `[x]` — выполнено (см. коммиты `feat(antidetect)`,
-`feat(layout)`, `fix(compat)`, `fix(lifecycle)`, `feat(profiles)`, `feat(antidetect-surfaces)`).
+`feat(layout)`, `fix(compat)`, `fix(lifecycle)`, `feat(profiles)`,
+`feat(antidetect-surfaces)`, `feat(cookies)`, `feat(sync)`).
 
 ## P0 — Блокеры продакшена
 - [x] Canvas/WebGL/Audio fingerprint noise per-profile (P0.1) — `src/main/fingerprint.ts`,
@@ -47,7 +48,15 @@
 - [ ] Профили как отдельные процессы (`--user-data-dir`) с сеткой через window-manager
       (полная изоляция GPU-процесса на профиль) — единственный путь к
       полноценному шрифт-листу на уровне ОС.
-- [ ] Синхронизатор действий (как в Dolphin): реплей кликов/ввода во все видимые профили.
+- [x] Синхронизатор действий (как в Dolphin): реплей кликов/ввода во все
+      видимые профили. Захват — CDP Runtime.addBinding + capture-скрипт
+      (pointerdown/up, wheel, keydown/up, clientX/Y), ретрансляция —
+      Input.dispatchMouseEvent/KeyEvent с VK-кодами и text для печатаемых
+      (как в Puppeteer); координаты 1:1 (ячейки равного размера); эхо
+      подавляется 100-мс окном на ячейку-получателя. Тумблер в тулбаре;
+      участники пересчитываются при изменениях сетки; переустановка после
+      DevTools; forget ДО teardown (crash-безопасность P2.5). v1-границы:
+      без drag&drop, без кросс-доменных iframe, без IME.
 - [x] Импорт cookies из Opera GX / Chrome (P3): форматы Netscape cookies.txt
       и DevTools-JSON (EditThisCookie/CDP; авто-детект по содержимому).
       Кнопка «печенье» в шапке ячейки — диалог с файловым диалогом (≤ 10 МБ),

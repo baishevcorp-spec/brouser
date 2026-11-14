@@ -46,6 +46,7 @@ const ICONS: Record<string, string> = {
   'grid-1x3': G('<rect x="4" y="4" width="5" height="16" rx="2" fill="currentColor"/><rect x="10" y="4" width="5" height="16" rx="2" fill="currentColor" opacity=".45"/><rect x="16" y="4" width="5" height="16" rx="2" fill="currentColor" opacity=".45"/>'),
   cookies: S('<circle cx="12" cy="12" r="9"/><path d="M9 10h.01M14.5 8.5h.01M15.5 14h.01M9.5 15h.01M12 12h.01"/>'),
   file: S('<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/>'),
+  zap: S('<path d="M13 2 3 14h7l-1 8 10-12h-7z"/>'),
 };
 
 /** Вставляет иконки во все элементы с data-icon. */
@@ -60,7 +61,7 @@ function mountIcons(root: ParentNode = document): void {
 // Состояние
 // ------------------------------------------------------------------
 
-let state: AppState = { profiles: [], layout: '2x2', theme: 'dark', capacity: 4, logs: [] };
+let state: AppState = { profiles: [], layout: '2x2', theme: 'dark', capacity: 4, logs: [], inputSync: false };
 let selectedId: string | null = null;
 let logOpen = false;
 /** Профиль, в который открыт диалог импорта cookies. */
@@ -73,6 +74,7 @@ const toolbarEl = document.getElementById('toolbar') as HTMLElement;
 const counterEl = document.getElementById('counter') as HTMLElement;
 const removeBtn = document.getElementById('btn-remove') as HTMLButtonElement;
 const themeBtn = document.getElementById('btn-theme') as HTMLButtonElement;
+const syncBtn = document.getElementById('btn-sync') as HTMLButtonElement;
 const logsBtn = document.getElementById('btn-logs') as HTMLButtonElement;
 const logPanelEl = document.getElementById('logpanel') as HTMLElement;
 const toastEl = document.getElementById('toast') as HTMLElement;
@@ -191,6 +193,14 @@ function bindToolbar(): void {
   });
   themeBtn.addEventListener('click', cycleTheme);
 
+  // Синхронизатор действий (P3): тумблер в тулбаре; состояние приходит
+  // событием profiles-updated (main подтвердит).
+  syncBtn.addEventListener('click', () => {
+    void api.setInputSync(!state.inputSync).then((res) => {
+      toast(res.ok ? 'ok' : 'err');
+    });
+  });
+
   // Удаление выбранного профиля: первое нажатие «взводит» кнопку,
   // второе (в течение 2.5 c) удаляет.
   removeBtn.addEventListener('click', () => {
@@ -263,6 +273,13 @@ function renderAll(): void {
     btn.classList.toggle('active', active);
     btn.setAttribute('aria-pressed', String(active));
   });
+
+  // Синхронизатор: активное состояние кнопки + предупреждение в тултипе.
+  syncBtn.classList.toggle('active', state.inputSync);
+  syncBtn.setAttribute('aria-pressed', String(state.inputSync));
+  syncBtn.dataset.tip = state.inputSync
+    ? 'Синхронизатор ВКЛЮЧЁН — клики и ввод повторяются во всех видимых ячейках. Нажмите, чтобы выключить'
+    : 'Синхронизатор действий: клики и ввод в любой ячейке повторяются во всех видимых ячейках';
 
   // Выделение могло исчезнуть (профиль удалён / скрыт).
   if (selectedId && !state.profiles.some((p) => p.id === selectedId)) {
