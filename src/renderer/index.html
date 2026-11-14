@@ -70,7 +70,12 @@
       <input id="f-url" type="text" placeholder="https://www.avito.ru" autocomplete="off">
       <input id="f-proxy" type="text" placeholder="http://user:pass@host:port" autocomplete="off">
       <textarea id="f-ext" rows="3" placeholder="Пути расширений, каждый с новой строки"></textarea>
-      <input id="f-ua" type="text" placeholder="User-Agent (необязательно)" autocomplete="off">
+      <input id="f-ua" type="text" list="ua-list" placeholder="User-Agent (необязательно)" autocomplete="off">
+      <datalist id="ua-list">
+        <option value="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36">Windows, Chrome 130</option>
+        <option value="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36">macOS, Chrome 130</option>
+        <option value="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36">Linux, Chrome 130</option>
+      </datalist>
       <input id="f-tz" type="text" list="tz-list" placeholder="Europe/Moscow" autocomplete="off">
       <datalist id="tz-list">
         <option value="Europe/Moscow"></option>

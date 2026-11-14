@@ -4,18 +4,21 @@
  * Управляет профилями, их изолированными сессиями (persist:profile-<id>)
  * и WebContentsView-ячейками сетки.
  *
- * Ключевая идея координат: renderer (HTML-интерфейс) рисует сетку и после каждой
- * перерисовки измеряет элемент .cell-body, отправляя прямоугольники в main
- * (канал 'view:set-bounds'). Main создаёт представление по запросу и ставит его
- * ровно в ячейку. Благодаря этому панель инструментов никогда не перекрывает
- * представления, а представления всегда видимы (расширения работают).
+ * Геометрия (P1.1): расчёт ячеек — ЗДЕСЬ, в main (модуль layout.ts),
+ * по contentBounds окна и константам UI_GEOMETRY. Renderer больше не измеряет
+ * и не шлёт координаты: он сообщает только layout-ready (handshake, P1.2)
+ * и состояние панели журнала (место под неё резервирует main).
  *
- * Правила жизни профилей:
- *  - видны и создаются только первые N профилей, где N = ячеек текущей раскладки;
- *  - при смене раскладки лишние представления уничтожаются, недостающие создаются;
+ * Правила жизни профилей (P1.3):
+ *  - WebContentsView создаётся для профиля, когда он попадает в первые N
+ *    ячеек текущей раскладки (N = LAYOUTS[layout].cells);
+ *  - при смене раскладки представления НЕ уничтожаются, а перепозиционируются;
+ *    не влезающие выносятся за пределы окна (PARKED) — сессия, расширения и
+ *    залогиненность сохраняются (backgroundThrottling: false);
+ *  - при удалении профиля его представление закрывается, сессия — по желанию;
  *  - сессия каждого профиля persistent (куки/кэш/LocalStorage/IndexedDB на диске).
  */
-import { app, BrowserWindow, Rectangle, Session, session, WebContentsView } from 'electron';
+import { app, BrowserWindow, Session, session, WebContentsView } from 'electron';
 import {
   AppState,
   CommandResult,
@@ -24,13 +27,13 @@ import {
   NewProfileInput,
   ProfileConfig,
   ProfileState,
-  Rect,
   ThemeId,
 } from './types';
 import { ConfigService, normalizeUrlInput } from './config';
 import { Logger } from './logger';
 import { parseProxy, ProxyInfo } from './proxy';
 import { applyClientHints, applyFingerprint, FingerprintSpec } from './fingerprint';
+import { Cell, computeCells, logPanelReserve, PARKED } from './layout';
 
 /** Внутреннее описание активного представления. */
 interface ManagedView {
@@ -55,8 +58,13 @@ export class ProfileManager {
   private views = new Map<string, ManagedView>();
   /** webContents.id -> id профиля (для обработчика login прокси). */
   private byWcId = new Map<number, string>();
-  /** Последние известные прямоугольники ячеек (DIP). */
-  private bounds = new Map<string, Rect>();
+  /** id профилей, чьи представления сейчас создаются (анти-дублирование). */
+  private pendingViews = new Set<string>();
+
+  /** Handshake (P1.2): renderer подтвердил первый рендер. */
+  private layoutReadyFlag = false;
+  /** Панель журнала открыта (резервируем место справа). */
+  private logPanelOpen = false;
 
   constructor(private config: ConfigService, private log: Logger) {
     // Аутентификация прокси (login/password из URL) — единый обработчик на app.
@@ -107,25 +115,68 @@ export class ProfileManager {
   }
 
   // ------------------------------------------------------------------
-  // Команды от renderer
+  // Геометрия (P1.1): ячейки считает main
   // ------------------------------------------------------------------
 
-  /** Renderer прислал прямоугольник ячейки профиля. */
-  setViewBounds(id: string, rect: Rect): void {
-    const normalized = normalizeRect(rect);
-    this.bounds.set(id, normalized);
-    const profile = this.config.config.profiles.find((p) => p.id === id);
-    if (!profile) return;
-
-    const existing = this.views.get(id);
-    if (existing) {
-      existing.view.setBounds(normalized);
-      return;
-    }
-    // Представление создаём только для профилей из первых N ячеек.
-    if (!this.isActive(id)) return;
-    void this.createView(profile, normalized);
+  /** Handshake (P1.2): renderer отрисовал сетку — расставляем представления. */
+  onLayoutReady(): void {
+    this.layoutReadyFlag = true;
+    this.recomputeLayout();
   }
+
+  /** Панель журнала открыта/закрыта — пересервируем место. */
+  setLogPanel(open: boolean): void {
+    if (this.logPanelOpen === open) return;
+    this.logPanelOpen = open;
+    this.recomputeLayout();
+  }
+
+  /**
+   * Пересчитать сетку и расставить все представления.
+   * Вызывается: после layout-ready, при resize (throttle 16мс в index.ts),
+   * смене раскладки, добавлении/удалении профиля, переключении журнала.
+   */
+  recomputeLayout(): void {
+    if (!this.win || this.win.isDestroyed() || !this.layoutReadyFlag) return;
+    try {
+      const content = this.win.getContentBounds();
+      const reserved = logPanelReserve(content.width, this.logPanelOpen);
+      const cells = computeCells(this.config.config.layout, content, reserved);
+      const profiles = this.config.config.profiles;
+
+      for (let i = 0; i < profiles.length; i++) {
+        const profile = profiles[i];
+        const mv = this.views.get(profile.id);
+
+        if (i < cells.length) {
+          if (mv) {
+            try {
+              mv.view.setBounds(cells[i] as Cell);
+            } catch {
+              /* view мог закрыться параллельно */
+            }
+          } else if (!this.pendingViews.has(profile.id)) {
+            // Представление создаётся в свой прямоугольник; сессия готовится
+            // асинхронно — актуальную геометрию применим в конце создания.
+            void this.createView(profile, cells[i] as Cell);
+          }
+        } else if (mv) {
+          // P1.3: не уничтожаем, а паркуем за пределами окна.
+          try {
+            mv.view.setBounds(PARKED);
+          } catch {
+            /* ignore */
+          }
+        }
+      }
+    } catch (err) {
+      this.log.error(`recomputeLayout: ${String(err)}`);
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // Команды от renderer
+  // ------------------------------------------------------------------
 
   async addProfile(input: NewProfileInput): Promise<CommandResult> {
     const name = (input.name || '').trim();
@@ -145,6 +196,8 @@ export class ProfileManager {
     this.config.save();
     this.log.info(`профиль добавлен: ${profile.id} (${profile.name})`);
     this.notify();
+    // Если профиль попал в первые N ячеек — создать для него представление.
+    this.recomputeLayout();
     return { ok: true };
   }
 
@@ -156,9 +209,10 @@ export class ProfileManager {
     }
     this.config.save();
     this.destroyView(id);
-    this.bounds.delete(id);
     this.log.info(`профиль удалён: ${id}`);
     this.notify();
+    // Сдвинуть оставшиеся представления на освободившиеся ячейки.
+    this.recomputeLayout();
     return { ok: true };
   }
 
@@ -168,9 +222,9 @@ export class ProfileManager {
     this.config.config.layout = layout;
     this.config.save();
     this.log.info(`раскладка изменена: ${layout}`);
-    // Представления, не попавшие в новый размер сетки, уничтожаем;
-    // новые создадутся, когда renderer пришлёт координаты ячеек.
-    this.syncViews();
+    // P1.3: представления не уничтожаются — лишние паркуются,
+    // недостающие создаются; залогиненные сессии переживают смену раскладки.
+    this.recomputeLayout();
     this.emit('layout-changed', layout);
     this.notify();
     return { ok: true };
@@ -235,13 +289,6 @@ export class ProfileManager {
     return this.config.config.profiles.some((p, i) => i < cap && p.id === id);
   }
 
-  /** Уничтожить представления, не попавшие в активные первые N профилей. */
-  private syncViews(): void {
-    for (const id of [...this.views.keys()]) {
-      if (!this.isActive(id)) this.destroyView(id);
-    }
-  }
-
   private notify(): void {
     this.emit('profiles-updated', this.getState());
   }
@@ -251,8 +298,10 @@ export class ProfileManager {
    * Все шаги «мягкие»: ошибка прокси/расширения/UA логируется,
    * но не роняет ни приложение, ни остальные профили.
    */
-  private async createView(profile: ProfileConfig, rect: Rect): Promise<void> {
+  private async createView(profile: ProfileConfig, rect: Cell): Promise<void> {
     const tag = `[${profile.id}]`;
+    if (this.views.has(profile.id) || this.pendingViews.has(profile.id)) return;
+    this.pendingViews.add(profile.id);
     try {
       // 1) Изолированная persistent-сессия: persist:profile-<id>.
       //    Куки, кэш, localStorage, IndexedDB — полностью раздельные.
@@ -307,7 +356,7 @@ export class ProfileManager {
       // Строка для проверки консистентности через https://browserleaks.com/canvas (P2.4).
       this.log.info(`${tag} ${fp.description}`);
 
-      // Профиль могли удалить, пока грузились расширения.
+      // Профиль могли удалить, пока готовилась сессия.
       if (!this.isActive(profile.id)) {
         this.log.info(`${tag} профиль больше не активен — представление не создаётся`);
         return;
@@ -322,7 +371,6 @@ export class ProfileManager {
         },
       });
       this.win.contentView.addChildView(view);
-      view.setBounds(this.bounds.get(profile.id) ?? rect);
 
       const mv: ManagedView = { profile, view, session: ses, proxy, extensions, fp, scriptAdded: false };
       this.views.set(profile.id, mv);
@@ -351,9 +399,36 @@ export class ProfileManager {
         this.log.error(`${tag} loadURL(${target}) failed: ${String(err)}`);
       });
 
+      // 8) Актуальная геометрия: за время подготовки сессии могли прийти
+      //    resize/смена раскладки — ставим свежий прямоугольник (или паркинг).
+      this.positionView(profile.id, rect);
+
       this.notify();
     } catch (err) {
       this.log.error(`${tag} критическая ошибка создания представления: ${String(err)}`);
+    } finally {
+      this.pendingViews.delete(profile.id);
+    }
+  }
+
+  /** Поставить представление профиля в его текущую ячейку (или парк). */
+  private positionView(id: string, fallback: Cell): void {
+    const mv = this.views.get(id);
+    if (!mv || !this.win || this.win.isDestroyed()) return;
+    let cell: Cell = PARKED;
+    try {
+      const content = this.win.getContentBounds();
+      const reserved = logPanelReserve(content.width, this.logPanelOpen);
+      const cells = computeCells(this.config.config.layout, content, reserved);
+      const index = this.config.config.profiles.findIndex((p) => p.id === id);
+      if (index >= 0 && index < cells.length) cell = cells[index] as Cell;
+    } catch {
+      cell = fallback;
+    }
+    try {
+      mv.view.setBounds(cell);
+    } catch {
+      /* view мог закрыться параллельно */
     }
   }
 
@@ -362,7 +437,7 @@ export class ProfileManager {
    * Emulation.setTimezoneOverride и патч отпечатка через
    * Page.addScriptToEvaluateOnNewDocument (основная инъекция P0.1).
    * Идемпотентность патча — на уровне скрипта (маркер на прототипе),
-   * здесь дополнительно страхуемся флагом scriptAdded (сброс при detach).
+   * здесь дополнительно страхуемся флагом scriptAdded (сбрасывается при detach).
    */
   private async applyProfileEmulation(mv: ManagedView): Promise<void> {
     const { profile } = mv;
@@ -462,7 +537,9 @@ export class ProfileManager {
   destroyAll(): void {
     for (const id of [...this.views.keys()]) this.destroyView(id);
     this.byWcId.clear();
-    this.bounds.clear();
+    this.pendingViews.clear();
+    this.layoutReadyFlag = false;
+    this.logPanelOpen = false;
     app.removeListener('login', this.handleLogin);
   }
 }
@@ -470,14 +547,6 @@ export class ProfileManager {
 // ------------------------------------------------------------------
 // Утилиты
 // ------------------------------------------------------------------
-
-function normalizeRect(r: Rect): Rectangle {
-  const x = Math.max(0, Math.round(r && r.x ? r.x : 0));
-  const y = Math.max(0, Math.round(r && r.y ? r.y : 0));
-  const width = Math.max(1, Math.round(r && r.width ? r.width : 0));
-  const height = Math.max(1, Math.round(r && r.height ? r.height : 0));
-  return { x, y, width, height };
-}
 
 /** Список путей расширений из textarea: строки / ';' / ','. */
 function splitPaths(raw: string): string[] {

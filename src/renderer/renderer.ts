@@ -1,13 +1,16 @@
 /**
  * Renderer Brouser: панель инструментов, сетка профилей, модальное окно, журнал.
  *
- * Главная задача renderer — рисовать интерфейс и измерять координаты ячеек сетки:
- * после каждой перерисовки (старт, смена раскладки, добавление/удаление профиля,
- * ресайз окна) измеряем .cell-body и отправляем прямоугольники в main.
- * Main ставит WebContentsView ровно в ячейку — представления всегда видимы.
+ * С P1.1 renderer НЕ измеряет и НЕ отправляет координаты ячеек: геометрию
+ * считает main (layout.ts) по contentBounds окна. Роль renderer:
+ *  - рисовать «оболочку» сетки (шапки ячеек, заглушки пустых ячеек);
+ *  - слать layout-ready после первого рендера (handshake, P1.2);
+ *  - слать состояние панели журнала (main резервирует под неё место);
+ *  - применять константы геометрии из preload в CSS-переменные — чтобы
+ *    отрисовка совпадала с расчётом ячеек в main байт-в-байт.
  */
 import { LAYOUTS, THEMES } from '../main/types';
-import type { AppState, NewProfileInput, ProfileState, Rect, ThemeId } from '../main/types';
+import type { AppState, NewProfileInput, ProfileState, ThemeId } from '../main/types';
 
 const api = window.brouser;
 
@@ -46,7 +49,7 @@ const ICONS: Record<string, string> = {
 function mountIcons(root: ParentNode = document): void {
   root.querySelectorAll<HTMLElement>('[data-icon]').forEach((el) => {
     const html = ICONS[el.dataset.icon ?? ''];
-    if (html) el.insertAdjacentHTML('afterbegin', html);
+    if (html && !el.firstChild) el.insertAdjacentHTML('afterbegin', html);
   });
 }
 
@@ -76,9 +79,6 @@ const fExt = document.getElementById('f-ext') as HTMLTextAreaElement;
 const fUa = document.getElementById('f-ua') as HTMLInputElement;
 const fTz = document.getElementById('f-tz') as HTMLInputElement;
 
-// Кэш последних отправленных прямоугольников — не спамим IPC.
-const boundCache = new Map<string, string>();
-
 // ------------------------------------------------------------------
 // Запуск
 // ------------------------------------------------------------------
@@ -88,17 +88,24 @@ document.addEventListener('DOMContentLoaded', () => {
   bindToolbar();
   bindModal();
 
-  // Первичное состояние.
+  // Геометрия из preload -> CSS-переменные (P1.1): отрисовка в renderer
+  // и расчёт ячеек в main используют один источник констант.
+  applyGeometryVars();
+
+  // Первичное состояние; после первого рендера — handshake layout-ready (P1.2):
+  // окно уже имеет финальные размеры, main может расставить представления.
   api
     .getState()
     .then((s) => {
       state = s;
       applyTheme();
       renderAll();
+      api.layoutReady();
     })
     .catch((err) => console.error('state:get failed', err));
 
-  // События main -> renderer.
+  // События main -> renderer. Координаты ячеек больше не ходят по IPC:
+  // main сам пересчитывает сетку при resize/раскладке/профилях.
   api.onProfilesUpdated((s) => {
     state = s;
     applyTheme();
@@ -114,13 +121,19 @@ document.addEventListener('DOMContentLoaded', () => {
     renderLogs();
     updateLogDot();
   });
-
-  // Пересчёт координат при ресайзе окна.
-  window.addEventListener('resize', scheduleSyncBounds);
-  if (typeof ResizeObserver !== 'undefined') {
-    new ResizeObserver(scheduleSyncBounds).observe(gridEl);
-  }
 });
+
+/** Константы геометрии (layout.ts в main) -> CSS-переменные документа. */
+function applyGeometryVars(): void {
+  const g = api.GEOMETRY;
+  const root = document.documentElement;
+  root.style.setProperty('--app-pad', `${g.appPad}px`);
+  root.style.setProperty('--app-gap', `${g.appGap}px`);
+  root.style.setProperty('--toolbar-h', `${g.toolbarH}px`);
+  root.style.setProperty('--grid-gap', `${g.gridGap}px`);
+  root.style.setProperty('--cell-head-h', `${g.cellHeadH}px`);
+  root.style.setProperty('--cell-gap', `${g.cellGap}px`);
+}
 
 // ------------------------------------------------------------------
 // Тема
@@ -174,11 +187,13 @@ function bindToolbar(): void {
     }
   });
 
-  // Журнал.
+  // Журнал: открытие/закрытие меняет доступную сетке ширину — сообщаем main,
+  // чтобы он резервировал место под панель и не перекрывал views.
   logsBtn.addEventListener('click', () => {
     logOpen = !logOpen;
     logsBtn.setAttribute('aria-expanded', String(logOpen));
     logPanelEl.hidden = !logOpen;
+    api.setLogPanel(logOpen);
     if (logOpen) renderLogs();
   });
 
@@ -234,8 +249,6 @@ function renderAll(): void {
     selectedId = null;
   }
   updateRemoveBtn();
-
-  scheduleSyncBounds();
 }
 
 function buildCell(p: ProfileState): HTMLElement {
@@ -291,7 +304,7 @@ function buildCell(p: ProfileState): HTMLElement {
     renderAll();
   });
 
-  // --- Тело ячейки: сюда main кладёт WebContentsView ---
+  // --- Тело ячейки: сюда main кладёт WebContentsView (координаты считает сам) ---
   const body = document.createElement('div');
   body.className = 'cell-body';
   body.dataset.viewId = p.id;
@@ -331,39 +344,8 @@ function cellTooltip(p: ProfileState): string {
   }
   if (p.timezone) parts.push(`таймзона: ${p.timezone}`);
   if (p.userAgentSet) parts.push('свой UA');
+  parts.push(`fp: seed=${p.fingerprintSeed ?? 'auto'}`);
   return parts.join(' • ');
-}
-
-// ------------------------------------------------------------------
-// Координаты ячеек -> main
-// ------------------------------------------------------------------
-
-let rafId = 0;
-
-function scheduleSyncBounds(): void {
-  if (rafId) return;
-  rafId = requestAnimationFrame(() => {
-    rafId = 0;
-    syncBounds();
-  });
-}
-
-function syncBounds(): void {
-  document.querySelectorAll<HTMLElement>('.cell-body[data-view-id]').forEach((el) => {
-    const id = el.dataset.viewId;
-    if (!id) return;
-    const r = el.getBoundingClientRect();
-    const rect: Rect = {
-      x: Math.round(r.x),
-      y: Math.round(r.y),
-      width: Math.max(1, Math.round(r.width)),
-      height: Math.max(1, Math.round(r.height)),
-    };
-    const key = `${rect.x},${rect.y},${rect.width},${rect.height}`;
-    if (boundCache.get(id) === key) return;
-    boundCache.set(id, key);
-    api.sendViewBounds(id, rect);
-  });
 }
 
 // ------------------------------------------------------------------
@@ -414,6 +396,7 @@ function bindModal(): void {
         logOpen = false;
         logsBtn.setAttribute('aria-expanded', 'false');
         logPanelEl.hidden = true;
+        api.setLogPanel(false);
       }
     }
   });
