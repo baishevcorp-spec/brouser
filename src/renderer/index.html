@@ -20,39 +20,39 @@
         </svg>
       </div>
 
-      <!-- Выбор раскладки: только иконки + тултипы -->
+      <!-- Выбор раскладки: только иконки + rich-тултипы (прозрачное окно поверх views) -->
       <div class="group" role="radiogroup" aria-label="Раскладка сетки" id="layout-group">
-        <button class="ibtn" data-layout="1x1" data-icon="grid-1x1" data-tip="1 x 1" aria-label="Раскладка 1 на 1"></button>
-        <button class="ibtn" data-layout="1x2" data-icon="grid-1x2" data-tip="1 x 2 — горизонтально" aria-label="Раскладка 1 на 2"></button>
-        <button class="ibtn" data-layout="2x1" data-icon="grid-2x1" data-tip="2 x 1 — вертикально" aria-label="Раскладка 2 на 1"></button>
-        <button class="ibtn" data-layout="2x2" data-icon="grid-2x2" data-tip="2 x 2" aria-label="Раскладка 2 на 2"></button>
-        <button class="ibtn" data-layout="3x1" data-icon="grid-3x1" data-tip="3 x 1 — вертикально" aria-label="Раскладка 3 на 1"></button>
-        <button class="ibtn" data-layout="1x3" data-icon="grid-1x3" data-tip="1 x 3 — горизонтально" aria-label="Раскладка 1 на 3"></button>
+        <button class="ibtn" data-layout="1x1" data-icon="grid-1x1" data-tip-id="layout-1x1" aria-label="Раскладка 1 на 1"></button>
+        <button class="ibtn" data-layout="1x2" data-icon="grid-1x2" data-tip-id="layout-1x2" aria-label="Раскладка 1 на 2"></button>
+        <button class="ibtn" data-layout="2x1" data-icon="grid-2x1" data-tip-id="layout-2x1" aria-label="Раскладка 2 на 1"></button>
+        <button class="ibtn" data-layout="2x2" data-icon="grid-2x2" data-tip-id="layout-2x2" aria-label="Раскладка 2 на 2"></button>
+        <button class="ibtn" data-layout="3x1" data-icon="grid-3x1" data-tip-id="layout-3x1" aria-label="Раскладка 3 на 1"></button>
+        <button class="ibtn" data-layout="1x3" data-icon="grid-1x3" data-tip-id="layout-1x3" aria-label="Раскладка 1 на 3"></button>
       </div>
 
       <div class="sep" aria-hidden="true"></div>
 
       <!-- Действия: добавить / удалить выбранный / перезагрузить все / синхронизатор / сохранить / тема / журнал -->
       <div class="group">
-        <button id="btn-add" class="ibtn accent" data-icon="plus" data-tip="Добавить профиль" aria-label="Добавить профиль"></button>
-        <button id="btn-remove" class="ibtn danger" data-icon="trash" data-tip="Удалить выбранный профиль — нажмите дважды" aria-label="Удалить выбранный профиль" disabled></button>
-        <button id="btn-reload-all" class="ibtn" data-icon="rotate" data-tip="Перезагрузить все" aria-label="Перезагрузить все"></button>
-        <button id="btn-sync" class="ibtn" data-icon="zap" data-tip="Синхронизатор действий: клики и ввод в любой ячейке повторяются во всех видимых ячейках" aria-label="Синхронизатор действий" aria-pressed="false"></button>
-        <button id="btn-save" class="ibtn" data-icon="save" data-tip="Сохранить конфиг" aria-label="Сохранить конфиг"></button>
-        <button id="btn-theme" class="ibtn" data-icon="palette" data-tip="Тема: тёмная / бирюзовая / светлая" aria-label="Сменить тему"></button>
-        <button id="btn-logs" class="ibtn" data-icon="logs" data-tip="Журнал" aria-label="Журнал" aria-expanded="false"></button>
+        <button id="btn-add" class="ibtn accent" data-icon="plus" data-tip-id="btn-add" aria-label="Добавить профиль"></button>
+        <button id="btn-remove" class="ibtn danger" data-icon="trash" data-tip-id="btn-remove" aria-label="Удалить выбранный профиль" disabled></button>
+        <button id="btn-reload-all" class="ibtn" data-icon="rotate" data-tip-id="btn-reload-all" aria-label="Перезагрузить все"></button>
+        <button id="btn-sync" class="ibtn" data-icon="zap" data-tip-id="btn-sync-off" aria-label="Синхронизатор действий" aria-pressed="false"></button>
+        <button id="btn-save" class="ibtn" data-icon="save" data-tip-id="btn-save" aria-label="Сохранить конфиг"></button>
+        <button id="btn-theme" class="ibtn" data-icon="palette" data-tip-id="btn-theme" aria-label="Сменить тему"></button>
+        <button id="btn-logs" class="ibtn" data-icon="logs" data-tip-id="btn-logs" aria-label="Журнал" aria-expanded="false"></button>
       </div>
 
       <div class="spacer"></div>
 
       <!-- Счётчик профилей/ячеек (числа только) -->
-      <div class="counter" id="counter" data-tip="Профили / ячейки">0/0</div>
+      <div class="counter" id="counter" data-tip-id="counter">0/0</div>
 
       <!-- Кнопки окна (frameless) -->
       <div class="group winctl">
-        <button id="win-min" class="ibtn" data-icon="minus" data-tip="Свернуть" aria-label="Свернуть"></button>
-        <button id="win-max" class="ibtn" data-icon="square" data-tip="Развернуть / восстановить" aria-label="Развернуть"></button>
-        <button id="win-close" class="ibtn danger" data-icon="x" data-tip="Закрыть" aria-label="Закрыть"></button>
+        <button id="win-min" class="ibtn" data-icon="minus" data-tip-id="win-min" aria-label="Свернуть"></button>
+        <button id="win-max" class="ibtn" data-icon="square" data-tip-id="win-max" aria-label="Развернуть"></button>
+        <button id="win-close" class="ibtn danger" data-icon="x" data-tip-id="win-close" aria-label="Закрыть"></button>
       </div>
     </header>
 
@@ -61,65 +61,10 @@
     <main id="grid" class="grid" aria-label="Сетка профилей"></main>
   </div>
 
-  <!-- ===== Модальное окно «Добавить профиль» ===== -->
-  <div id="modal-overlay" class="overlay" hidden>
-    <form id="modal" class="glass card" novalidate>
-      <div class="modal-head">
-        <button type="button" id="modal-close" class="ibtn sm" data-icon="x" data-tip="Закрыть" aria-label="Закрыть"></button>
-      </div>
-      <input id="f-name" type="text" placeholder="Имя профиля" autocomplete="off" required>
-      <input id="f-url" type="text" placeholder="https://www.avito.ru" autocomplete="off">
-      <input id="f-proxy" type="text" placeholder="http://user:pass@host:port" autocomplete="off">
-      <textarea id="f-ext" rows="3" placeholder="Пути расширений, каждый с новой строки"></textarea>
-      <input id="f-ua" type="text" list="ua-list" placeholder="User-Agent (необязательно)" autocomplete="off">
-      <datalist id="ua-list">
-        <option value="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36">Windows, Chrome 130</option>
-        <option value="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36">macOS, Chrome 130</option>
-        <option value="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36">Linux, Chrome 130</option>
-      </datalist>
-      <input id="f-tz" type="text" list="tz-list" placeholder="Europe/Moscow" autocomplete="off">
-      <datalist id="tz-list">
-        <option value="Europe/Moscow"></option>
-        <option value="Europe/Kaliningrad"></option>
-        <option value="Europe/Samara"></option>
-        <option value="Asia/Yekaterinburg"></option>
-        <option value="Asia/Omsk"></option>
-        <option value="Asia/Novosibirsk"></option>
-        <option value="Asia/Irkutsk"></option>
-        <option value="Asia/Vladivostok"></option>
-        <option value="UTC"></option>
-      </datalist>
-      <div class="modal-actions">
-        <button type="button" id="modal-cancel" class="ibtn sm" data-icon="x" data-tip="Отмена" aria-label="Отмена"></button>
-        <button type="submit" id="modal-save" class="ibtn sm accent" data-icon="check" data-tip="Создать" aria-label="Создать"></button>
-      </div>
-    </form>
-  </div>
-
-  <!-- ===== Модальное окно «Импорт cookies» ===== -->
-  <div id="cookies-overlay" class="overlay" hidden>
-    <form id="cookies-modal" class="glass card" novalidate>
-      <div class="modal-head">
-        <button type="button" id="cf-close" class="ibtn sm" data-icon="x" data-tip="Закрыть" aria-label="Закрыть"></button>
-      </div>
-      <div class="modal-title" id="cf-title">Импорт cookies</div>
-      <div class="file-row">
-        <button type="button" id="cf-browse" class="ibtn sm accent" data-icon="file" data-tip="Выбрать файл cookies.txt / .json (до 10 МБ)" aria-label="Выбрать файл"></button>
-        <span id="cf-file-name" class="hint">файл не выбран — вставьте cookies текстом ниже</span>
-      </div>
-      <textarea id="cf-text" rows="7" spellcheck="false" placeholder="Netscape cookies.txt или DevTools-JSON (EditThisCookie) — формат определяется автоматически"></textarea>
-      <input id="cf-domain" type="text" placeholder="Фильтр домена, напр. avito.ru (пусто — все)" autocomplete="off" data-tip="Импортируются куки этого домена и его поддоменов; куки посторонних сайтов из общего экспорта — нет">
-      <label class="checkbox-row">
-        <input type="checkbox" id="cf-reload" checked>
-        <span>Перезагрузить страницу профиля после импорта</span>
-      </label>
-      <div id="cf-status" class="hint" hidden></div>
-      <div class="modal-actions">
-        <button type="button" id="cf-cancel" class="ibtn sm" data-icon="x" data-tip="Отмена" aria-label="Отмена"></button>
-        <button type="submit" id="cf-import" class="ibtn sm accent" data-icon="check" data-tip="Импортировать" aria-label="Импортировать"></button>
-      </div>
-    </form>
-  </div>
+  <!-- Модалки «Добавить профиль» и «Импорт cookies» больше не HTML-оверлеи:
+       WebContentsView — нативный слой поверх рендерера, HTML-модалки уходили
+       под сетку. Все диалоги — отдельные BrowserWindow с parent (main:
+       windows/dialogWindow.ts), данные передаются через query. -->
 
   <!-- ===== Журнал ===== -->
   <div id="logpanel" class="glass card" hidden aria-label="Журнал событий"></div>

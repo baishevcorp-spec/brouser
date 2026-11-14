@@ -228,6 +228,72 @@ export interface FilePickResult {
 }
 
 /**
+ * Rich-тултип поверх сетки (UI-фикс: HTML-тултипы renderer'а перекрываются
+ * WebContentsView, поэтому тултип рисуется в отдельном прозрачном
+ * always-on-top окне). Payload renderer -> main по каналу `tooltip:show`.
+ */
+export interface TooltipShowPayload {
+  /** Прямоугольник якоря в CSS-пикселях относительно контента главного окна. */
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  /** Показать над якорем (шапки ячеек), по умолчанию — под. */
+  preferTop?: boolean;
+  /** Заголовок подсказки (жирная строка). */
+  title: string;
+  /** Тело подсказки — 1–2 предложения инструкции (опционально). */
+  body?: string;
+}
+
+/** Данные рендера тултипа: main -> tooltip-окно (канал `tooltip:render`). */
+export interface TooltipRenderData {
+  /** Поколение запроса: запаздывающий ответ с чужим gen игнорируется. */
+  gen: number;
+  title: string;
+  body?: string;
+  /** Тема главного окна — тултип красится в ту же. */
+  theme: ThemeId;
+}
+
+/**
+ * API диалога «Импорт cookies» (отдельное BrowserWindow, preload-cookie.ts).
+ * Диалог переиспользует существующие каналы cookies:import / cookies:pick-file /
+ * view:reload — новых привилегий не появляется.
+ */
+export interface CookieDialogApi {
+  /** Системный диалог выбора файла (родитель — окно диалога) + чтение ≤ 10 МБ. */
+  pickFile(): Promise<FilePickResult>;
+  /** Импорт cookies в сессию профиля. */
+  importCookies(profileId: string, input: CookieImportInput): Promise<CookieImportResult>;
+  /** Перезагрузить ячейку профиля (после импорта). */
+  reloadProfile(profileId: string): Promise<void>;
+  /** Закрыть окно диалога. */
+  closeWindow(): void;
+}
+
+/** API диалога «Добавить профиль» (отдельное BrowserWindow, preload-profile-form.ts). */
+export interface ProfileFormDialogApi {
+  addProfile(input: NewProfileInput): Promise<CommandResult>;
+  closeWindow(): void;
+}
+
+/** API диалога подтверждения удаления (отдельное BrowserWindow, preload-confirm.ts). */
+export interface ConfirmDialogApi {
+  /** Удаление — только здесь, с явным подтверждением человека. */
+  removeProfile(profileId: string): Promise<CommandResult>;
+  closeWindow(): void;
+}
+
+/** API preload-tooltip.ts (окно rich-тултипов). */
+export interface TooltipWindowApi {
+  /** Подписка на данные рендера (main -> окно тултипа). */
+  onRender(cb: (data: TooltipRenderData) => void): () => void;
+  /** Сообщить фактический размер отрисованной карточки (для setBounds). */
+  measured(gen: number, width: number, height: number): void;
+}
+
+/**
  * API, который preload экспортирует в renderer как window.brouser.
  * Описание каналов см. в README (раздел «IPC-контракт»).
  */
@@ -252,6 +318,25 @@ export interface BrouserApi {
   minimize(): Promise<void>;
   toggleMaximize(): Promise<void>;
   close(): Promise<void>;
+
+  // ---------- Диалоговые окна (UI-фикс поверх WebContentsView) ----------
+  /**
+   * Открыть диалог импорта cookies в отдельном окне (родитель — главное окно;
+   * на Windows/Linux — модальное). HTML-модалка renderer'а перекрывалась views.
+   */
+  openCookieImport(profileId: string): Promise<CommandResult>;
+  /** Диалог «Добавить профиль» в отдельном окне. */
+  openProfileForm(): Promise<CommandResult>;
+  /** Диалог подтверждения удаления профиля в отдельном окне. */
+  openDeleteConfirm(profileId: string): Promise<CommandResult>;
+
+  /**
+   * Показать rich-тултип (title + body) в прозрачном always-on-top окне над
+   * элементом-якорем. Прямоугольник — в CSS-пикселях контента главного окна.
+   */
+  tooltipShow(payload: TooltipShowPayload): void;
+  /** Скрыть тултип (mouseleave / клик / blur / перерисовка сетки). */
+  tooltipHide(): void;
 
   /** Высота тулбара (DIP) — синхронизация CSS и main (P1.1). */
   readonly TOOLBAR_HEIGHT: number;

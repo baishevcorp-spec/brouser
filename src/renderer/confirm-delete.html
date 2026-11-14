@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="ru" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <!-- Только локальные ресурсы -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'">
+  <title>Удалить профиль</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="dialog">
+  <!--
+    Подтверждение удаления профиля — отдельное BrowserWindow: прежде кнопка
+    «вооружалась» вторым нажатием (HTML-подтверждение перекрывалось views и
+    требовало таймаут). Теперь — явный диалог с кнопками Да/Нет.
+  -->
+  <div class="glass card confirm-card">
+    <div class="confirm-head">
+      <span class="confirm-icon" data-icon="alert"></span>
+      <span class="modal-title" id="cfm-title">Удалить профиль?</span>
+    </div>
+    <p class="confirm-text" id="cfm-text">Профиль будет удалён вместе с сессией и cookies. Это действие необратимо.</p>
+    <div id="cfm-status" class="hint" hidden></div>
+    <div class="modal-actions">
+      <button type="button" id="cfm-cancel" class="ibtn sm" data-icon="x" data-tip="Отмена" aria-label="Отмена"></button>
+      <button type="button" id="cfm-delete" class="ibtn sm danger wide" data-icon="trash" aria-label="Удалить">Удалить</button>
+    </div>
+  </div>
+
+  <script src="dialog-confirm-delete.js"></script>
+</body>
+</html>

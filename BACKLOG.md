@@ -44,6 +44,33 @@
       (деление только на константы раскладки), модалка «Добавить» работает,
       новый профиль грузится в первую ячейку.
 
+## P2.6 — UI поверх views (модалки и подсказки)
+- [x] **Диалоги — отдельные BrowserWindow с parent** (`windows/dialogWindow.ts`):
+      HTML-модалки renderer'а перекрывались нативным слоем WebContentsView
+      (не двигались, уходили под сетку). Импорт cookies (640x560, свёрнутая
+      инструкция «Как создать файл?» внутри), добавление профиля,
+      подтверждение удаления (вместо «armed»-двойного клика) — модальные на
+      Windows/Linux, frame: true (перетаскивание за системный заголовок),
+      show после ready-to-show, sandbox: true + свой preload на диалог
+      (`preload-cookie.ts` / `preload-profile-form.ts` / `preload-confirm.ts`,
+      команды — только существующие IPC-каналы; данные — через query).
+      Родитель `cookies:pick-file` — окно-отправитель (диалог файла выше
+      активного окна).
+- [x] **Rich-тултипы — прозрачное always-on-top окно** (`windows/tooltipWindow.ts`,
+      `renderer/tooltips.ts`, `tooltip.ts`): контент подсказок (title +
+      1–2 предложения «что делает и зачем») в реестре data-tip-id,
+      динамические (сводка профиля, счётчик, sync on/off) — data-tip-title/
+      tip-body; renderer главного окна шлёт anchor-рект + контент
+      (tooltip:show), main позиционирует (кламп к workArea, переворот),
+      окно тултипа меряет себя (tooltip:measured) и показывается через
+      showInactive; focusable: false, setIgnoreMouseEvents(forward) —
+      клики проходят сквозь; gen-счётчик против гонок; при blur/клике/
+      перерисовке сетки — скрытие. CSS-тултипы `[data-tip]` остались
+      только в диалоговых окнах (body.dialog) — там views нет.
+- [x] README: раздел «Импорт cookies» дополнен инструкцией экспорта
+      (Cookie-Editor / Netscape, «что важно», безопасность) + IPC-контракт
+      (dialog:*, tooltip:*).
+
 ## P3 — Идеи на потом
 - [ ] Профили как отдельные процессы (`--user-data-dir`) с сеткой через window-manager
       (полная изоляция GPU-процесса на профиль) — единственный путь к

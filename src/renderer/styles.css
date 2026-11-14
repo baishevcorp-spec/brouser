@@ -241,10 +241,15 @@ body {
   box-shadow: 0 0 6px var(--danger);
 }
 
-/* ---------- Тултипы (единственная форма подсказок) ---------- */
-[data-tip] { position: relative; }
+/* ---------- Тултипы ----------
+   В ГЛАВНОМ окне CSS-тултипы больше не показываются: их перекрывает
+   нативный слой WebContentsView — подсказки рисует прозрачное
+   always-on-top окно (main: windows/tooltipWindow.ts, renderer:
+   tooltip.ts). CSS-тултипы живут только в диалоговых окнах
+   (body.dialog) — там нет views и HTML-тултипы работают. */
+body.dialog [data-tip] { position: relative; }
 
-[data-tip]::after {
+body.dialog [data-tip]::after {
   content: attr(data-tip);
   position: absolute;
   left: 50%;
@@ -270,21 +275,21 @@ body {
   box-shadow: var(--shadow);
 }
 
-[data-tip]:hover::after,
-[data-tip]:focus-visible::after {
+body.dialog [data-tip]:hover::after,
+body.dialog [data-tip]:focus-visible::after {
   opacity: 1;
   transform: translateX(-50%) translateY(0);
 }
 
-/* Тултипы над элементом (для ячеек сетки) */
-[data-tip-pos='top']::after {
+/* Тултипы над элементом */
+body.dialog [data-tip-pos='top']::after {
   top: auto;
   bottom: calc(100% + 10px);
   transform: translateX(-50%) translateY(-4px);
 }
 
-[data-tip-pos='top']:hover::after,
-[data-tip-pos='top']:focus-visible::after {
+body.dialog [data-tip-pos='top']:hover::after,
+body.dialog [data-tip-pos='top']:focus-visible::after {
   transform: translateX(-50%) translateY(0);
 }
 
@@ -388,20 +393,7 @@ body {
   border: 1px solid var(--stroke-strong);
 }
 
-/* ---------- Модальное окно ---------- */
-.overlay {
-  position: fixed;
-  inset: 0;
-  display: grid;
-  place-items: center;
-  background: rgba(2, 12, 10, 0.45);
-  -webkit-backdrop-filter: blur(6px);
-  backdrop-filter: blur(6px);
-  z-index: 300;
-}
-
-.overlay[hidden] { display: none; }
-
+/* ---------- Карточка (журнал главного окна, диалоги) ---------- */
 .card {
   padding: 16px;
   display: flex;
@@ -410,8 +402,166 @@ body {
   width: min(430px, calc(100vw - 40px));
 }
 
-.modal-head { display: flex; justify-content: flex-end; }
-.modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 4px; }
+#logpanel.card { width: auto; }
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: auto; /* в диалогах прижимает кнопки к низу окна */
+  padding-top: 4px;
+}
+
+/* ---------- Диалоговые окна (отдельные BrowserWindow поверх views) ----------
+   Тело диалога — окно с системным тайтл-баром (frame: true): карта формы
+   просто заполняет клиентскую область с отступами. */
+body.dialog {
+  display: block;
+  padding: 14px;
+  overflow: hidden;
+  user-select: none;
+}
+
+body.dialog .card {
+  width: auto;
+  max-width: none;
+  height: 100%;
+  box-sizing: border-box;
+}
+
+/* Карточка диалога растягивается по высоте окна — поле-заполнитель снизу. */
+body.dialog #cookies-modal,
+body.dialog #profile-form {
+  height: 100%;
+}
+
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.field { display: flex; flex-direction: column; gap: 4px; }
+.field-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+/* Свёрнутая инструкция «Как создать файл?» в диалоге импорта cookies. */
+details.howto {
+  border: 1px solid var(--stroke);
+  border-radius: var(--radius-sm);
+  background: var(--glass);
+  padding: 0;
+}
+
+details.howto summary {
+  cursor: pointer;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  list-style: none;
+  user-select: none;
+}
+
+details.howto summary::-webkit-details-marker { display: none; }
+
+details.howto summary::before { content: '▸ '; color: var(--accent); }
+details.howto[open] summary::before { content: '▾ '; }
+
+details.howto .howto-body {
+  max-height: 40vh;
+  overflow-y: auto;
+  padding: 0 12px 10px;
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--text);
+}
+
+details.howto .howto-body p,
+details.howto .howto-body ol,
+details.howto .howto-body ul { margin: 6px 0 6px 16px; }
+details.howto .howto-body ol { list-style: decimal; }
+details.howto .howto-body ul { list-style: disc; }
+details.howto .howto-body li { margin: 2px 0; }
+details.howto .howto-body code {
+  font-family: ui-monospace, 'Cascadia Code', 'SF Mono', Consolas, monospace;
+  font-size: 10.5px;
+  background: var(--accent-soft);
+  border-radius: 4px;
+  padding: 1px 4px;
+}
+details.howto .howto-note { color: var(--muted); }
+
+/* Диалог подтверждения удаления. */
+.confirm-card .confirm-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.confirm-icon { display: inline-grid; place-items: center; color: var(--danger); }
+.confirm-icon svg { width: 20px; height: 20px; }
+.confirm-text {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text);
+}
+.ibtn.wide {
+  width: auto;
+  padding: 0 12px;
+  gap: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* ---------- Окно rich-тултипов (прозрачное always-on-top) ---------- */
+body.tipwin {
+  background: transparent;
+  overflow: hidden;
+  user-select: none;
+}
+
+/* Карточка лежит в (0,0): её прямоугольник — размер окна (tooltip:measured). */
+.tipcard {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: max-content;
+  max-width: 320px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: var(--glass-2);
+  border: 1px solid var(--stroke-strong);
+  box-shadow: var(--shadow);
+  color: var(--text);
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+.tipcard .t {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  white-space: normal;
+  word-break: break-word;
+}
+
+.tipcard .b {
+  margin-top: 3px;
+  color: var(--muted);
+  white-space: normal;
+  word-break: break-word;
+}
+
+.tipcard .b[hidden] { display: none; }
 
 input,
 textarea {

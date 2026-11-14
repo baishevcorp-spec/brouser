@@ -62,7 +62,11 @@ Brouser — десктопное мульти-аккаунтное прилож�
 - **Конфиг в userData.** `config.json` создаётся автоматически при первом
   запуске (2 профиля Avito), правится руками или из UI; сохраняется атомарно.
 - **Glass-интерфейс.** Frameless-окно, стеклянная (blur) панель инструментов,
-  три темы (dark / teal / light), минимум текста — подсказки через тултипы.
+  три темы (dark / teal / light), минимум текста — подсказки через rich-тултипы
+  (title + инструкция) в отдельном прозрачном always-on-top окне поверх сетки.
+- **Диалоги поверх сетки.** Модалки (импорт cookies, добавление профиля,
+  подтверждение удаления) — отдельные `BrowserWindow` с parent: их не
+  перекрывает слой `WebContentsView`, перетаскиваются за системный заголовок.
 - **Логирование.** Консоль + файл `app.log` в userData + панель журнала в UI;
   на кнопке журнала появляется красная точка при свежих ошибках. При старте
   каждого профиля пишется строка его фингерпринта (seed, GPU, CH).
@@ -324,7 +328,10 @@ attached»). Brouser при открытии DevTools временно откл�
 
 Перенос уже залогиненной сессии из обычного браузера (Opera GX, Chrome) в
 профиль Brouser без повторного входа. Кнопка «печенье» в шапке ячейки
-открывает диалог импорта.
+открывает **отдельное диалоговое окно** (модальное на Windows/Linux:
+HTML-модалки renderer'а перекрывались сеткой WebContentsView — теперь
+диалог всегда выше views и перетаскивается за системный заголовок). В
+диалоге — свёрнутый блок «Как создать файл с cookies?» с этой инструкцией.
 
 **Поддерживаемые форматы (детект — автоматически):**
 
@@ -335,6 +342,41 @@ attached»). Brouser при открытии DevTools временно откл�
 - **DevTools-JSON** — массив объектов, как экспортируют EditThisCookie и
   клоны (поля `domain`, `hostOnly`, `path`, `secure`, `httpOnly`,
   `expirationDate`/`expires`, `session`, `sameSite`).
+
+### Как экспортировать cookies для профиля
+
+**Способ 1 — Cookie-Editor (самый простой):**
+
+1. Установите расширение **Cookie-Editor** в Chrome / Edge / Brave
+   (или Opera GX).
+2. Войдите в Avito под нужным аккаунтом.
+3. Откройте Cookie-Editor → внизу кнопка **Export** → **Export as JSON**.
+4. Сохраните файл, например `avito-account1.json`.
+5. В Brouser: «Импорт cookies» → выберите файл.
+
+**Способ 2 — Netscape (curl / wget / yt-dlp):**
+
+1. Используйте плагин «Get cookies.txt LOCALLY» или
+   `yt-dlp --cookies-from-browser chrome --cookies cookies.txt`.
+2. Формат строки: `domain ⇥ flag ⇥ path ⇥ secure ⇥ expiry ⇥ name ⇥ value`
+   (таб-разделённые).
+3. Brouser понимает оба формата — JSON и Netscape.
+
+**Что важно:**
+
+- Cookies должны быть с домена `.avito.ru` (и поддоменов, если есть).
+- Пароли и логины не нужны — только cookies.
+- Файл содержит чувствительные данные (по сути — ключ от сессии).
+  Не передавайте его третьим лицам, не коммитьте в git, храните локально.
+- После импорта проверьте: откройте avito.ru в этом профиле — вы должны
+  быть залогинены без ввода пароля.
+- Если Avito разлогинивает сразу — cookies истекли, либо IP-адрес прокси
+  не совпадает с тем, с которого они получены. Cookie привязан к
+  IP-сессии, импорт с другого IP не работает.
+
+**Безопасность:** Brouser хранит cookies в
+`userData/Partitions/<profile>/Cookies` в зашифрованном виде (шифрование
+Chromium). Импортированный файл после загрузки можно удалить.
 
 **Как импортируется:**
 
@@ -546,6 +588,9 @@ Renderer -> main (через `ipcRenderer.invoke`, методы `window.brouser`
 | `window:minimize` | `minimize()` | свернуть frameless-окно |
 | `window:toggle-maximize` | `toggleMaximize()` | развернуть/восстановить окно |
 | `window:close` | `close()` | закрыть окно (= выход) |
+| `dialog:open-cookie-import` | `openCookieImport(profileId)` | открыть окно импорта cookies (BrowserWindow с parent, модальное на win/linux; данные — через query) |
+| `dialog:open-profile-form` | `openProfileForm()` | открыть окно «Добавить профиль» (BrowserWindow с parent) |
+| `dialog:open-delete-confirm` | `openDeleteConfirm(profileId)` | открыть окно подтверждения удаления профиля |
 
 Renderer -> main, односторонняя отправка (`ipcRenderer.send`):
 
@@ -553,15 +598,18 @@ Renderer -> main, односторонняя отправка (`ipcRenderer.send
 |---|---|---|
 | `layout:ready` | `layoutReady()` | handshake: renderer закончил первый рендер — main расставляет views |
 | `ui:log-panel` | `setLogPanel(open)` | панель журнала открыта/закрыта — main резервирует место под неё |
+| `tooltip:show` | `tooltipShow(payload)` | показать rich-тултип (прозрачное always-on-top окно): anchor-рект в CSS-px контента + title/body |
+| `tooltip:hide` | `tooltipHide()` | скрыть тултип (mouseleave / клик / blur / перерисовка) |
+| `dialog:close` | — (диалоговые preload'ы) | закрыть окно-отправитель (импорт cookies / форма профиля / подтверждение удаления) |
 
-Main -> renderer (события, подписки через `onProfilesUpdated` /
-`onLayoutChanged` / `onLogMessage`):
+Main -> renderer и окна диалогов:
 
 | Канал | Payload | Назначение |
 |---|---|---|
 | `profiles-updated` | `AppState` | любое изменение профилей/раскладки/темы |
 | `layout-changed` | `LayoutId` | смена раскладки (renderer перестраивает сетку) |
 | `log-message` | `LogEntry` | новая запись журнала (трансляция всех логов) |
+| `tooltip:render` | `{gen, title, body, theme}` | данные рендера для окна тултипов; ответ окна — `tooltip:measured` `{gen, w, h}`, main ставит bounds и показывает окно |
 
 Полное состояние — `AppState`:
 

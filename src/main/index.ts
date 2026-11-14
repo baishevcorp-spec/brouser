@@ -13,6 +13,8 @@ import * as path from 'node:path';
 import { ConfigService } from './config';
 import { Logger } from './logger';
 import { ProfileManager } from './profileManager';
+import { openDialog } from './windows/dialogWindow';
+import { TooltipWindowManager } from './windows/tooltipWindow';
 import {
   AppState,
   CommandResult,
@@ -22,6 +24,7 @@ import {
   LayoutId,
   NewProfileInput,
   ThemeId,
+  TooltipShowPayload,
 } from './types';
 
 // Только один экземпляр приложения (одна сетка сессий за раз).
@@ -48,6 +51,8 @@ function bootstrap(): void {
   let logger: Logger | null = null;
   let config: ConfigService | null = null;
   let manager: ProfileManager | null = null;
+  /** Окно rich-тултипов: прозрачный always-on-top overlay поверх views. */
+  let tooltips: TooltipWindowManager | null = null;
 
   app.on('second-instance', () => {
     if (win) {
@@ -105,6 +110,10 @@ function bootstrap(): void {
     void win.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
 
     manager!.attachWindow(win);
+    // Тултипы поверх WebContentsView: прозрачное always-on-top окно с темой
+    // главного конфига. При blur (фокус ушёл в диалог/DevTools) — прятать.
+    tooltips = new TooltipWindowManager(win, () => config!.config.theme ?? 'dark');
+    win.on('blur', () => tooltips?.hide());
 
     // Запоминаем размеры окна (по ТЗ сохраняются только width/height).
     let persistTimer: ReturnType<typeof setTimeout> | undefined;
@@ -141,8 +150,21 @@ function bootstrap(): void {
     });
     win.on('closed', () => {
       win = null;
+      tooltips?.destroy();
+      tooltips = null;
       manager?.destroyAll();
     });
+  }
+
+  /** Хост URL без www — предзаполнение фильтра домена в диалоге импорта cookies. */
+  function hostFromUrl(url: string): string {
+    try {
+      let host = new URL(url).hostname.toLowerCase();
+      if (host.startsWith('www.')) host = host.slice(4);
+      return host;
+    } catch {
+      return '';
+    }
   }
 
   function registerIpc(): void {
@@ -167,9 +189,13 @@ function bootstrap(): void {
     );
     // Диалог выбора файла cookies (cookies.txt / .json, ≤ 10 МБ) и его чтение.
     // Возврат — в renderer: текст попадает в textarea модалки (можно отредактировать).
-    ipcMain.handle('cookies:pick-file', async (): Promise<FilePickResult> => {
+    // Родитель файлового диалога — окно, из которого пришли (главное ИЛИ окно
+    // импорта cookies): диалог всегда поверх того, что сейчас активно.
+    ipcMain.handle('cookies:pick-file', async (e): Promise<FilePickResult> => {
       try {
-        const parent = win && !win.isDestroyed() ? win : null;
+        const parent =
+          BrowserWindow.fromWebContents(e.sender) ??
+          (win && !win.isDestroyed() ? win : null);
         const options: Electron.OpenDialogOptions = {
           title: 'Импорт cookies — выберите файл',
           filters: [
@@ -210,6 +236,78 @@ function bootstrap(): void {
       config!.save();
       logger!.info('config.json сохранён вручную');
       return { ok: true };
+    });
+
+    // ---------- Диалоговые окна (UI-фикс: HTML-модалки перекрывались views) ----------
+    // Все модалки — отдельные BrowserWindow с parent=главное окно (см.
+    // windows/dialogWindow.ts); данные — в query, команды — существующие каналы.
+    ipcMain.handle('dialog:open-cookie-import', (_e, profileId: string): CommandResult => {
+      if (!win || win.isDestroyed()) return { ok: false, error: 'Главное окно закрыто' };
+      const p = manager!.getState().profiles.find((x) => x.id === profileId);
+      if (!p) return { ok: false, error: 'Профиль не найден' };
+      openDialog(win, logger!, {
+        html: 'cookie-import.html',
+        preload: 'preload-cookie.js',
+        query: {
+          id: p.id,
+          name: p.name,
+          host: hostFromUrl(p.url),
+          visible: p.visible ? '1' : '0',
+          theme: manager!.getState().theme,
+        },
+        title: `Импорт cookies — ${p.name}`,
+        width: 640,
+        height: 560,
+        minWidth: 520,
+        minHeight: 460,
+      });
+      return { ok: true };
+    });
+
+    ipcMain.handle('dialog:open-profile-form', (): CommandResult => {
+      if (!win || win.isDestroyed()) return { ok: false, error: 'Главное окно закрыто' };
+      openDialog(win, logger!, {
+        html: 'profile-form.html',
+        preload: 'preload-profile-form.js',
+        query: { theme: manager!.getState().theme },
+        title: 'Новый профиль — Brouser',
+        width: 470,
+        height: 580,
+        minWidth: 420,
+        minHeight: 480,
+      });
+      return { ok: true };
+    });
+
+    ipcMain.handle('dialog:open-delete-confirm', (_e, profileId: string): CommandResult => {
+      if (!win || win.isDestroyed()) return { ok: false, error: 'Главное окно закрыто' };
+      const p = manager!.getState().profiles.find((x) => x.id === profileId);
+      if (!p) return { ok: false, error: 'Профиль не найден' };
+      openDialog(win, logger!, {
+        html: 'confirm-delete.html',
+        preload: 'preload-confirm.js',
+        query: { id: p.id, name: p.name, theme: manager!.getState().theme },
+        title: `Удалить профиль — ${p.name}`,
+        width: 400,
+        height: 230,
+        resizable: false,
+      });
+      return { ok: true };
+    });
+
+    // Закрыть окно, из которого пришло сообщение (диалоги).
+    ipcMain.on('dialog:close', (e) => {
+      const w = BrowserWindow.fromWebContents(e.sender);
+      if (w && !w.isDestroyed()) w.close();
+    });
+
+    // ---------- Rich-тултипы (прозрачное always-on-top окно) ----------
+    ipcMain.on('tooltip:show', (e, payload: TooltipShowPayload) => {
+      // Тултипы шлёт только renderer главного окна (у диалогов — свои CSS-тултипы).
+      if (win && !win.isDestroyed() && e.sender === win.webContents) tooltips?.show(payload);
+    });
+    ipcMain.on('tooltip:hide', (e) => {
+      if (win && !win.isDestroyed() && e.sender === win.webContents) tooltips?.hide();
     });
 
     // ---------- Кнопки окна (frameless) ----------

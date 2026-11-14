@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="ru" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <!-- Только локальные ресурсы -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'">
+  <title>Импорт cookies</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="dialog">
+  <!--
+    Диалог «Импорт cookies» — отдельное BrowserWindow (родитель — главное
+    окно; на Windows/Linux модальное): HTML-модалка renderer'а перекрывалась
+    нативным слоем WebContentsView, таскать её было невозможно.
+    Данные профиля приходят через query (?id&name&host&visible&theme),
+    команды — через preload-cookie.js (минимальный API поверх существующих
+    IPC-каналов).
+  -->
+  <form id="cookies-modal" class="glass card" novalidate>
+    <div class="modal-head">
+      <span class="modal-title" id="cf-title">Импорт cookies</span>
+      <button type="button" id="cf-close" class="ibtn sm" data-icon="x" data-tip="Закрыть окно" aria-label="Закрыть"></button>
+    </div>
+
+    <div class="file-row">
+      <button type="button" id="cf-browse" class="ibtn sm accent" data-icon="file" data-tip="Открыть системный диалог выбора файла cookies.txt / .json (до 10 МБ)" aria-label="Выбрать файл"></button>
+      <span id="cf-file-name" class="hint">файл не выбран — вставьте cookies текстом ниже</span>
+    </div>
+
+    <textarea id="cf-text" rows="7" spellcheck="false" placeholder="Netscape cookies.txt или DevTools-JSON (EditThisCookie) — формат определяется автоматически"></textarea>
+
+    <input id="cf-domain" type="text" placeholder="Фильтр домена, напр. avito.ru (пусто — все)" autocomplete="off" data-tip="Импортируются куки этого домена и его поддоменов; куки посторонних сайтов из общего экспорта — нет">
+
+    <label class="checkbox-row">
+      <input type="checkbox" id="cf-reload" checked>
+      <span>Перезагрузить страницу профиля после импорта</span>
+    </label>
+
+    <!-- Свёрнутая инструкция: как вообще получить файл с cookies -->
+    <details class="howto" id="cf-howto">
+      <summary>Как создать файл с cookies?</summary>
+      <div class="howto-body">
+        <p><strong>Способ 1 — Cookie-Editor (самый простой):</strong></p>
+        <ol>
+          <li>Установите расширение <strong>Cookie-Editor</strong> в Chrome / Edge / Brave (или Opera GX).</li>
+          <li>Войдите в Avito под нужным аккаунтом.</li>
+          <li>Откройте Cookie-Editor → внизу кнопка <strong>Export</strong> → <strong>Export as JSON</strong>.</li>
+          <li>Сохраните файл, например <code>avito-account1.json</code>.</li>
+          <li>Здесь: «Выбрать файл» → укажите его.</li>
+        </ol>
+        <p><strong>Способ 2 — Netscape (curl / wget / yt-dlp):</strong></p>
+        <ol>
+          <li>Плагин «Get cookies.txt LOCALLY» или <code>yt-dlp --cookies-from-browser chrome --cookies cookies.txt</code>.</li>
+          <li>Формат строки: <code>domain ⇥ flag ⇥ path ⇥ secure ⇥ expiry ⇥ name ⇥ value</code> (таб-разделённые).</li>
+          <li>Brouser понимает оба формата — JSON и Netscape.</li>
+        </ol>
+        <p><strong>Что важно:</strong></p>
+        <ul>
+          <li>Cookies должны быть с домена <code>.avito.ru</code> (и поддоменов, если есть).</li>
+          <li>Пароли и логины не нужны — только cookies.</li>
+          <li>Файл содержит чувствительные данные (по сути ключ от сессии): не передавайте третьим лицам, не коммитьте в git, храните локально.</li>
+          <li>После импорта проверьте: откройте avito.ru в этом профиле — вы должны быть залогинены без ввода пароля.</li>
+          <li>Если Avito разлогинивает сразу — cookies истекли, либо IP-адрес прокси не совпадает с тем, с которого они получены: cookie привязан к IP-сессии, импорт с другого IP не работает.</li>
+        </ul>
+        <p class="howto-note"><strong>Безопасность:</strong> Brouser хранит cookies в <code>userData/Partitions/&lt;profile&gt;/Cookies</code> в зашифрованном виде (шифрование Chromium). Импортированный файл после загрузки можно удалить.</p>
+      </div>
+    </details>
+
+    <div id="cf-status" class="hint" hidden></div>
+
+    <div class="modal-actions">
+      <button type="button" id="cf-cancel" class="ibtn sm" data-icon="x" data-tip="Отмена" aria-label="Отмена"></button>
+      <button type="submit" id="cf-import" class="ibtn sm accent" data-icon="check" data-tip="Импортировать" aria-label="Импортировать"></button>
+    </div>
+  </form>
+
+  <script src="dialog-cookie.js"></script>
+</body>
+</html>

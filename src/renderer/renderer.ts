@@ -1,5 +1,5 @@
 /**
- * Renderer Brouser: панель инструментов, сетка профилей, модальное окно, журнал.
+ * Renderer Brouser: панель инструментов, сетка профилей, журнал, тултипы.
  *
  * С P1.1 renderer НЕ измеряет и НЕ отправляет координаты ячеек: геометрию
  * считает main (layout.ts) по contentBounds окна. Роль renderer:
@@ -8,54 +8,20 @@
  *  - слать состояние панели журнала (main резервирует под неё место);
  *  - применять константы геометрии из preload в CSS-переменные — чтобы
  *    отрисовка совпадала с расчётом ячеек в main байт-в-байт.
+ *
+ * UI-фикс (модалки/подсказки поверх WebContentsView): HTML-модалки и
+ * CSS-тултипы этого окна перекрываются нативным слоем views. Поэтому
+ * все диалоги открываются отдельными BrowserWindow (main:
+ * windows/dialogWindow.ts) по командам open*Dialog, а rich-тултипы
+ * (tooltips.ts) рендерятся в прозрачном always-on-top окне через
+ * api.tooltipShow/tooltipHide.
  */
 import { LAYOUTS, THEMES } from '../main/types';
-import type { AppState, CookieImportInput, NewProfileInput, ProfileState, ThemeId } from '../main/types';
+import type { AppState, ProfileState, ThemeId } from '../main/types';
+import { ICONS, mountIcons } from './icons';
+import { resolveTooltip } from './tooltips';
 
 const api = window.brouser;
-
-// ------------------------------------------------------------------
-// Иконки (inline SVG; stroke/fill наследуют currentColor)
-// ------------------------------------------------------------------
-
-const S = (inner: string): string =>
-  `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${inner}</svg>`;
-
-const G = (inner: string): string =>
-  `<svg viewBox="0 0 24 24" aria-hidden="true">${inner}</svg>`;
-
-const ICONS: Record<string, string> = {
-  plus: S('<path d="M12 5v14M5 12h14"/>'),
-  trash: S('<path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M10 11v6M14 11v6"/>'),
-  rotate: S('<path d="M20 12a8 8 0 1 1-2.9-6.2"/><path d="M20 4v4h-4"/>'),
-  copy: S('<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/>'),
-  save: S('<path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8"/><path d="M7 3v5h8"/>'),
-  palette: S('<path d="M12 2s6 6.6 6 11a6 6 0 0 1-12 0c0-4.4 6-11 6-11z"/>'),
-  logs: S('<path d="M4 6h16M4 12h11M4 18h7"/>'),
-  code: S('<path d="m8 8-4 4 4 4"/><path d="m16 8 4 4-4 4"/>'),
-  minus: S('<path d="M5 12h14"/>'),
-  square: S('<rect x="5" y="5" width="14" height="14" rx="2"/>'),
-  x: S('<path d="M18 6 6 18M6 6l12 12"/>'),
-  check: S('<path d="M20 6 9 17l-5-5"/>'),
-  alert: S('<path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/>'),
-  'grid-1x1': G('<rect x="4" y="4" width="16" height="16" rx="3" fill="currentColor"/>'),
-  'grid-1x2': G('<rect x="4" y="4" width="7" height="16" rx="2.5" fill="currentColor"/><rect x="13" y="4" width="7" height="16" rx="2.5" fill="currentColor" opacity=".45"/>'),
-  'grid-2x1': G('<rect x="4" y="4" width="16" height="7" rx="2.5" fill="currentColor"/><rect x="4" y="13" width="16" height="7" rx="2.5" fill="currentColor" opacity=".45"/>'),
-  'grid-2x2': G('<rect x="4" y="4" width="7" height="7" rx="2.5" fill="currentColor"/><rect x="13" y="4" width="7" height="7" rx="2.5" fill="currentColor" opacity=".45"/><rect x="4" y="13" width="7" height="7" rx="2.5" fill="currentColor" opacity=".45"/><rect x="13" y="13" width="7" height="7" rx="2.5" fill="currentColor"/>'),
-  'grid-3x1': G('<rect x="4" y="4" width="16" height="5" rx="2" fill="currentColor"/><rect x="4" y="10" width="16" height="5" rx="2" fill="currentColor" opacity=".45"/><rect x="4" y="16" width="16" height="5" rx="2" fill="currentColor" opacity=".45"/>'),
-  'grid-1x3': G('<rect x="4" y="4" width="5" height="16" rx="2" fill="currentColor"/><rect x="10" y="4" width="5" height="16" rx="2" fill="currentColor" opacity=".45"/><rect x="16" y="4" width="5" height="16" rx="2" fill="currentColor" opacity=".45"/>'),
-  cookies: S('<circle cx="12" cy="12" r="9"/><path d="M9 10h.01M14.5 8.5h.01M15.5 14h.01M9.5 15h.01M12 12h.01"/>'),
-  file: S('<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/>'),
-  zap: S('<path d="M13 2 3 14h7l-1 8 10-12h-7z"/>'),
-};
-
-/** Вставляет иконки во все элементы с data-icon. */
-function mountIcons(root: ParentNode = document): void {
-  root.querySelectorAll<HTMLElement>('[data-icon]').forEach((el) => {
-    const html = ICONS[el.dataset.icon ?? ''];
-    if (html && !el.firstChild) el.insertAdjacentHTML('afterbegin', html);
-  });
-}
 
 // ------------------------------------------------------------------
 // Состояние
@@ -64,10 +30,6 @@ function mountIcons(root: ParentNode = document): void {
 let state: AppState = { profiles: [], layout: '2x2', theme: 'dark', capacity: 4, logs: [], inputSync: false };
 let selectedId: string | null = null;
 let logOpen = false;
-/** Профиль, в который открыт диалог импорта cookies. */
-let cookieProfileId: string | null = null;
-/** Импорт в процессе (кнопка заблокирована). */
-let cookieImporting = false;
 
 const gridEl = document.getElementById('grid') as HTMLElement;
 const toolbarEl = document.getElementById('toolbar') as HTMLElement;
@@ -79,27 +41,6 @@ const logsBtn = document.getElementById('btn-logs') as HTMLButtonElement;
 const logPanelEl = document.getElementById('logpanel') as HTMLElement;
 const toastEl = document.getElementById('toast') as HTMLElement;
 
-const overlayEl = document.getElementById('modal-overlay') as HTMLElement;
-const formEl = document.getElementById('modal') as HTMLFormElement;
-const fName = document.getElementById('f-name') as HTMLInputElement;
-const fUrl = document.getElementById('f-url') as HTMLInputElement;
-const fProxy = document.getElementById('f-proxy') as HTMLInputElement;
-const fExt = document.getElementById('f-ext') as HTMLTextAreaElement;
-const fUa = document.getElementById('f-ua') as HTMLInputElement;
-const fTz = document.getElementById('f-tz') as HTMLInputElement;
-
-// Модалка импорта cookies (P3).
-const cookiesOverlayEl = document.getElementById('cookies-overlay') as HTMLElement;
-const cookiesFormEl = document.getElementById('cookies-modal') as HTMLFormElement;
-const cfTitleEl = document.getElementById('cf-title') as HTMLElement;
-const cfTextEl = document.getElementById('cf-text') as HTMLTextAreaElement;
-const cfDomainEl = document.getElementById('cf-domain') as HTMLInputElement;
-const cfReloadEl = document.getElementById('cf-reload') as HTMLInputElement;
-const cfStatusEl = document.getElementById('cf-status') as HTMLElement;
-const cfFileNameEl = document.getElementById('cf-file-name') as HTMLElement;
-const cfBrowseBtn = document.getElementById('cf-browse') as HTMLButtonElement;
-const cfImportBtn = document.getElementById('cf-import') as HTMLButtonElement;
-
 // ------------------------------------------------------------------
 // Запуск
 // ------------------------------------------------------------------
@@ -107,8 +48,7 @@ const cfImportBtn = document.getElementById('cf-import') as HTMLButtonElement;
 document.addEventListener('DOMContentLoaded', () => {
   mountIcons();
   bindToolbar();
-  bindModal();
-  bindCookiesModal();
+  bindTooltips();
 
   // Геометрия из preload -> CSS-переменные (P1.1): отрисовка в renderer
   // и расчёт ячеек в main используют один источник констант.
@@ -185,7 +125,14 @@ function bindToolbar(): void {
     });
   });
 
-  document.getElementById('btn-add')?.addEventListener('click', openModal);
+  // Модалки — отдельные BrowserWindow (UI-фикс: HTML-модалки перекрывались
+  // WebContentsView). См. main/windows/dialogWindow.ts.
+  document.getElementById('btn-add')?.addEventListener('click', () => {
+    void api.openProfileForm().then((res) => {
+      if (!res.ok) toast('err');
+    });
+  });
+
   document.getElementById('btn-reload-all')?.addEventListener('click', () => void api.reloadAll());
   document.getElementById('btn-save')?.addEventListener('click', async () => {
     const res = await api.saveConfig();
@@ -201,20 +148,13 @@ function bindToolbar(): void {
     });
   });
 
-  // Удаление выбранного профиля: первое нажатие «взводит» кнопку,
-  // второе (в течение 2.5 c) удаляет.
+  // Удаление выбранного профиля: подтверждение в отдельном окне
+  // (HTML-подтверждение перекрывалось views; «armed»-кнопка ушла).
   removeBtn.addEventListener('click', () => {
     if (!selectedId) return;
-    if (removeBtn.classList.contains('armed')) {
-      disarmRemove();
-      void api.removeProfile(selectedId);
-      selectedId = null;
-      updateRemoveBtn();
-    } else {
-      removeBtn.classList.add('armed');
-      removeBtn.dataset.tip = 'Нажмите ещё раз для удаления';
-      setTimeout(disarmRemove, 2500);
-    }
+    void api.openDeleteConfirm(selectedId).then((res) => {
+      if (!res.ok) toast('err');
+    });
   });
 
   // Журнал: открытие/закрытие меняет доступную сетке ширину — сообщаем main,
@@ -235,11 +175,17 @@ function bindToolbar(): void {
     if ((e.target as HTMLElement).closest('button')) return;
     void api.toggleMaximize();
   });
-}
 
-function disarmRemove(): void {
-  removeBtn.classList.remove('armed');
-  removeBtn.dataset.tip = 'Удалить выбранный профиль — нажмите дважды';
+  // Escape: закрываем панель журнала (диалоги живут в отдельных окнах и
+  // обрабатывают Esc сами).
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && logOpen) {
+      logOpen = false;
+      logsBtn.setAttribute('aria-expanded', 'false');
+      logPanelEl.hidden = true;
+      api.setLogPanel(false);
+    }
+  });
 }
 
 function updateRemoveBtn(): void {
@@ -253,6 +199,10 @@ function updateRemoveBtn(): void {
 function renderAll(): void {
   const { rows, cols, cells } = LAYOUTS[state.layout];
 
+  // Перерисовка сетки заменяет DOM под курсором без mouseout — гасим тултип,
+  // если он был над элементом сетки.
+  hideTooltipIfStale();
+
   gridEl.style.gridTemplateRows = `repeat(${rows}, minmax(0, 1fr))`;
   gridEl.style.gridTemplateColumns = `repeat(${cols}, minmax(0, 1fr))`;
   gridEl.replaceChildren();
@@ -263,9 +213,9 @@ function renderAll(): void {
     gridEl.appendChild(p ? buildCell(p) : buildEmptyCell());
   }
 
-  // Счётчик профилей/ячеек.
+  // Счётчик профилей/ячеек (rich-тултип — над сеткой, поверх views).
   counterEl.textContent = `${state.profiles.length}/${cells}`;
-  counterEl.dataset.tip = `Профилей: ${state.profiles.length} — в сетке: ${Math.min(state.profiles.length, cells)}`;
+  counterEl.dataset.tipId = 'counter';
 
   // Активная кнопка раскладки.
   document.querySelectorAll<HTMLButtonElement>('[data-layout]').forEach((btn) => {
@@ -274,12 +224,10 @@ function renderAll(): void {
     btn.setAttribute('aria-pressed', String(active));
   });
 
-  // Синхронизатор: активное состояние кнопки + предупреждение в тултипе.
+  // Синхронизатор: активное состояние кнопки + rich-тултип о состоянии.
   syncBtn.classList.toggle('active', state.inputSync);
   syncBtn.setAttribute('aria-pressed', String(state.inputSync));
-  syncBtn.dataset.tip = state.inputSync
-    ? 'Синхронизатор ВКЛЮЧЁН — клики и ввод повторяются во всех видимых ячейках. Нажмите, чтобы выключить'
-    : 'Синхронизатор действий: клики и ввод в любой ячейке повторяются во всех видимых ячейках';
+  syncBtn.dataset.tipId = state.inputSync ? 'btn-sync-on' : 'btn-sync-off';
 
   // Выделение могло исчезнуть (профиль удалён / скрыт).
   if (selectedId && !state.profiles.some((p) => p.id === selectedId)) {
@@ -296,8 +244,9 @@ function buildCell(p: ProfileState): HTMLElement {
   const head = document.createElement('div');
   head.className = 'cell-head';
   head.dataset.id = p.id;
-  // Тултип со сводкой профиля (вместо текста в интерфейсе).
-  head.dataset.tip = cellTooltip(p);
+  // Rich-тултип со сводкой профиля: динамические title+body (над views).
+  head.dataset.tipTitle = p.name;
+  head.dataset.tipBody = cellTooltip(p);
 
   const dot = document.createElement('span');
   dot.className = 'dot';
@@ -309,38 +258,33 @@ function buildCell(p: ProfileState): HTMLElement {
   head.append(dot, title);
 
   // Кнопки шапки: дублировать / импорт cookies / обновить / devtools / удалить.
-  const btnCopy = iconButton('copy', 'Дублировать профиль (настройки и прокси копируются, отпечаток будет свой)', 'top');
+  const btnCopy = iconButton('copy', 'cell-copy', 'top');
   btnCopy.addEventListener('click', () => {
     void api.duplicateProfile(p.id).then((res) => {
       toast(res.ok ? 'ok' : 'err');
     });
   });
 
-  // P3: импорт cookies (cookies.txt / DevTools-JSON) в сессию профиля.
-  const btnCookies = iconButton('cookies', 'Импорт cookies (cookies.txt / DevTools-JSON) — перенос залогиненной сессии из Chrome / Opera GX', 'top');
-  btnCookies.addEventListener('click', () => openCookiesModal(p));
+  // Импорт cookies — отдельное окно (HTML-модалка уходила под views).
+  const btnCookies = iconButton('cookies', 'cell-cookies', 'top');
+  btnCookies.addEventListener('click', () => {
+    void api.openCookieImport(p.id).then((res) => {
+      if (!res.ok) toast('err');
+    });
+  });
 
-  const btnReload = iconButton('rotate', 'Обновить', 'top');
+  const btnReload = iconButton('rotate', 'cell-reload', 'top');
   btnReload.addEventListener('click', () => void api.reloadView(p.id));
 
-  const btnDev = iconButton('code', 'DevTools (отдельное окно)', 'top');
+  const btnDev = iconButton('code', 'cell-devtools', 'top');
   btnDev.addEventListener('click', () => void api.openDevTools(p.id));
 
-  const btnDel = iconButton('trash', 'Удалить профиль — нажмите дважды', 'top');
+  const btnDel = iconButton('trash', 'cell-delete', 'top');
   btnDel.classList.add('sm', 'danger');
   btnDel.addEventListener('click', () => {
-    if (btnDel.classList.contains('armed')) {
-      void api.removeProfile(p.id);
-      if (selectedId === p.id) selectedId = null;
-      updateRemoveBtn();
-    } else {
-      btnDel.classList.add('armed');
-      btnDel.dataset.tip = 'Нажмите ещё раз для удаления';
-      setTimeout(() => {
-        btnDel.classList.remove('armed');
-        btnDel.dataset.tip = 'Удалить профиль — нажмите дважды';
-      }, 2500);
-    }
+    void api.openDeleteConfirm(p.id).then((res) => {
+      if (!res.ok) toast('err');
+    });
   });
 
   head.append(btnCopy, btnCookies, btnReload, btnDev, btnDel);
@@ -364,27 +308,31 @@ function buildCell(p: ProfileState): HTMLElement {
 function buildEmptyCell(): HTMLElement {
   const cell = document.createElement('div');
   cell.className = 'cell-empty';
-  const btn = iconButton('plus', 'Добавить профиль', 'top');
-  btn.addEventListener('click', openModal);
+  const btn = iconButton('plus', 'cell-empty-add', 'top');
+  btn.addEventListener('click', () => {
+    void api.openProfileForm().then((res) => {
+      if (!res.ok) toast('err');
+    });
+  });
   cell.appendChild(btn);
   return cell;
 }
 
-function iconButton(icon: string, tip: string, pos?: 'top'): HTMLButtonElement {
+function iconButton(icon: string, tipId: string, pos?: 'top'): HTMLButtonElement {
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.className = 'ibtn sm';
   btn.dataset.icon = icon;
-  btn.dataset.tip = tip;
+  btn.dataset.tipId = tipId;
   if (pos) btn.dataset.tipPos = pos;
-  btn.setAttribute('aria-label', tip);
+  btn.setAttribute('aria-label', tipId);
   btn.innerHTML = ICONS[icon] ?? '';
   return btn;
 }
 
-/** Сводка профиля для тултипа шапки ячейки. */
+/** Сводка профиля для тела rich-тултипа шапки ячейки. */
 function cellTooltip(p: ProfileState): string {
-  const parts = [`${p.name} — ${p.url}`];
+  const parts = [p.url];
   if (p.hasProxy) parts.push(`прокси: ${p.proxyScheme ?? 'вкл'}`);
   if (p.extensions.length > 0) {
     const okCount = p.extensions.filter((e) => e.ok).length;
@@ -398,173 +346,111 @@ function cellTooltip(p: ProfileState): string {
 }
 
 // ------------------------------------------------------------------
-// Модальное окно «Добавить профиль»
+// Rich-тултипы поверх WebContentsView
 // ------------------------------------------------------------------
 
-function openModal(): void {
-  formEl.reset();
-  overlayEl.hidden = false;
-  fName.focus();
+/**
+ * HTML-тултипы этого окна перекрываются нативными views — поэтому контент
+ * подсказок (tooltips.ts: data-tip-id / data-tip-title / data-tip) уходит
+ * в main (tooltip:show), а рисует его прозрачное always-on-top окно.
+ * Задержка показа 300 мс — как у прежних CSS-тултипов.
+ */
+const TIP_DELAY = 300;
+let tipTimer: ReturnType<typeof setTimeout> | undefined;
+/** Элемент, над которым сейчас тултип (или запланирован). */
+let tipEl: HTMLElement | null = null;
+
+function tipTarget(el: EventTarget | null): HTMLElement | null {
+  if (!(el instanceof Element)) return null;
+  const found = el.closest<HTMLElement>('[data-tip], [data-tip-id], [data-tip-title]');
+  return found ?? null;
 }
 
-function closeModal(): void {
-  overlayEl.hidden = true;
-}
-
-function bindModal(): void {
-  document.getElementById('modal-close')?.addEventListener('click', closeModal);
-  document.getElementById('modal-cancel')?.addEventListener('click', closeModal);
-  overlayEl.addEventListener('mousedown', (e) => {
-    if (e.target === overlayEl) closeModal();
-  });
-
-  formEl.addEventListener('submit', (e) => {
-    e.preventDefault();
-    const input: NewProfileInput = {
-      name: fName.value.trim(),
-      url: fUrl.value.trim(),
-      proxy: fProxy.value.trim(),
-      extensions: fExt.value,
-      userAgent: fUa.value.trim(),
-      timezone: fTz.value.trim(),
-    };
-    if (!input.name) {
-      toast('err');
-      return;
-    }
-    void api.addProfile(input).then((res) => {
-      toast(res.ok ? 'ok' : 'err');
-      if (res.ok) closeModal();
-    });
-  });
-
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') {
-      if (!overlayEl.hidden) closeModal();
-      else if (!cookiesOverlayEl.hidden) closeCookiesModal();
-      else if (logOpen) {
-        logOpen = false;
-        logsBtn.setAttribute('aria-expanded', 'false');
-        logPanelEl.hidden = true;
-        api.setLogPanel(false);
-      }
-    }
-  });
-}
-
-// ------------------------------------------------------------------
-// Модальное окно «Импорт cookies» (P3)
-// ------------------------------------------------------------------
-
-/** Хост URL профиля (без www) — предзаполнение фильтра домена. */
-function hostFromProfileUrl(url: string): string {
-  try {
-    let host = new URL(url).hostname.toLowerCase();
-    if (host.startsWith('www.')) host = host.slice(4);
-    return host;
-  } catch {
-    return '';
+function hideTooltipIfStale(): void {
+  if (tipEl && gridEl.contains(tipEl)) {
+    clearTimeout(tipTimer);
+    tipEl = null;
+    api.tooltipHide();
   }
 }
 
-function openCookiesModal(p: ProfileState): void {
-  cookieProfileId = p.id;
-  cookieImporting = false;
-  cfTitleEl.textContent = `Импорт cookies — ${p.name}`;
-  cfTextEl.value = '';
-  // Фильтр по умолчанию — хост профиля: из общего экспорта браузера
-  // берём только куки «своего» сайта (avito.ru), остальное не тащим.
-  const host = hostFromProfileUrl(p.url);
-  cfDomainEl.value = host;
-  cfReloadEl.checked = true;
-  cfStatusEl.hidden = true;
-  cfStatusEl.textContent = '';
-  cfStatusEl.classList.remove('ok', 'err');
-  cfFileNameEl.textContent = 'файл не выбран — вставьте cookies текстом ниже';
-  cookiesOverlayEl.hidden = false;
-  cfBrowseBtn.focus();
-}
+function bindTooltips(): void {
+  const scheduleShow = (el: HTMLElement): void => {
+    clearTimeout(tipTimer);
+    tipTimer = setTimeout(() => {
+      if (tipEl !== el) return;
+      const content = resolveTooltip(el);
+      if (!content) return;
+      const r = el.getBoundingClientRect();
+      api.tooltipShow({
+        x: r.x,
+        y: r.y,
+        width: r.width,
+        height: r.height,
+        preferTop: el.dataset.tipPos === 'top',
+        title: content.title,
+        body: content.body,
+      });
+    }, TIP_DELAY);
+  };
 
-function closeCookiesModal(): void {
-  if (cookieImporting) return; // не закрывать посреди импорта
-  cookiesOverlayEl.hidden = true;
-  cookieProfileId = null;
-}
-
-function setCookieStatus(kind: 'ok' | 'err', text: string): void {
-  cfStatusEl.hidden = false;
-  cfStatusEl.classList.remove('ok', 'err');
-  cfStatusEl.classList.add(kind);
-  cfStatusEl.textContent = text;
-}
-
-function bindCookiesModal(): void {
-  document.getElementById('cf-close')?.addEventListener('click', closeCookiesModal);
-  document.getElementById('cf-cancel')?.addEventListener('click', closeCookiesModal);
-  cookiesOverlayEl.addEventListener('mousedown', (e) => {
-    if (e.target === cookiesOverlayEl) closeCookiesModal();
-  });
-
-  // Выбор файла в нативном диалоге: main читает его (≤ 10 МБ) и отдаёт
-  // текст — кладём в textarea, чтобы перед импортом можно было посмотреть/подрезать.
-  cfBrowseBtn.addEventListener('click', () => {
-    if (cookieImporting) return;
-    void api.pickCookieFile().then((res) => {
-      if (!res.ok) {
-        if (res.error && res.error !== 'Отменено') setCookieStatus('err', res.error);
-        return;
-      }
-      cfTextEl.value = res.content ?? '';
-      cfFileNameEl.textContent = res.name ?? 'файл';
-      setCookieStatus('ok', `Загружен файл «${res.name}» — проверьте фильтр домена и нажмите «Импортировать»`);
-    });
-  });
-
-  cookiesFormEl.addEventListener('submit', (e) => {
-    e.preventDefault();
-    const id = cookieProfileId;
-    if (!id || cookieImporting) return;
-    const source = cfTextEl.value.trim();
-    if (!source) {
-      setCookieStatus('err', 'Вставьте cookies или выберите файл');
+  document.addEventListener('mouseover', (e) => {
+    const el = tipTarget(e.target);
+    if (el === tipEl) return;
+    tipEl = el;
+    if (!el) {
+      clearTimeout(tipTimer);
+      api.tooltipHide();
       return;
     }
-    const input: CookieImportInput = {
-      source,
-      format: 'auto',
-      domains: cfDomainEl.value.trim(),
-    };
-    const doReload = cfReloadEl.checked;
-    cookieImporting = true;
-    cfImportBtn.disabled = true;
-    void api
-      .importCookies(id, input)
-      .then((res) => {
-        if (res.ok) {
-          const parts = [`Импортировано ${res.imported} из ${res.total}`];
-          if (res.skippedDomain > 0) parts.push(`чужих доменов пропущено ${res.skippedDomain}`);
-          if (res.expired > 0) parts.push(`истёкших пропущено ${res.expired}`);
-          if (res.failed > 0) parts.push(`ошибок ${res.failed}`);
-          setCookieStatus('ok', parts.join(' — '));
-          toast('ok');
-          // Перезагрузка страницы: куки применяются к живому представлению.
-          // Невидимому профилю перезагрузка не нужна — куки лягут в его
-          // сессию и применятся при открытии ячейки.
-          const visible = state.profiles.find((x) => x.id === id)?.visible ?? false;
-          if (doReload && visible) void api.reloadView(id);
-        } else {
-          setCookieStatus('err', res.error ?? 'Импорт не удался');
-          toast('err');
-        }
-      })
-      .catch((err) => {
-        setCookieStatus('err', String(err));
-        toast('err');
-      })
-      .finally(() => {
-        cookieImporting = false;
-        cfImportBtn.disabled = false;
-      });
+    const content = resolveTooltip(el);
+    if (!content) {
+      clearTimeout(tipTimer);
+      api.tooltipHide();
+      return;
+    }
+    scheduleShow(el);
+  });
+
+  document.addEventListener('mouseout', (e) => {
+    const from = tipTarget(e.target);
+    if (!from || from !== tipEl) return;
+    const to = tipTarget(e.relatedTarget);
+    if (to === tipEl) return;
+    clearTimeout(tipTimer);
+    tipEl = null;
+    api.tooltipHide();
+  });
+
+  // Клавиатурная доступность: тултип на клавиатурном фокусе (:focus-visible —
+  // как раньше в CSS), клик по кнопке его не дёргает.
+  document.addEventListener('focusin', (e) => {
+    const el = tipTarget(e.target);
+    if (!el || !el.matches(':focus-visible')) return;
+    tipEl = el;
+    const content = resolveTooltip(el);
+    if (!content) return;
+    const r = el.getBoundingClientRect();
+    api.tooltipShow({
+      x: r.x,
+      y: r.y,
+      width: r.width,
+      height: r.height,
+      preferTop: el.dataset.tipPos === 'top',
+      title: content.title,
+      body: content.body,
+    });
+  });
+  document.addEventListener('focusout', () => {
+    if (tipTimer) clearTimeout(tipTimer);
+    tipEl = null;
+    api.tooltipHide();
+  });
+
+  // Клик/нажатие клавиши — скрыть (тултип не должен переживать действие).
+  document.addEventListener('mousedown', () => {
+    clearTimeout(tipTimer);
+    api.tooltipHide();
   });
 }
 

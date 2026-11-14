@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="ru" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'">
+  <title>tooltip</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="tipwin">
+  <!--
+    Окно rich-тултипов Brouser: прозрачное always-on-top окно поверх сетки
+    WebContentsView (HTML-тултипы рендерера перекрывались views). Контент
+    присылает main (tooltip:render), фактический размер карточки уходит
+    обратно (tooltip:measured) — main ставит окну финальные bounds.
+    Тело прозрачно: видна только стеклянная карточка.
+  -->
+  <div id="tip" class="tipcard" role="tooltip" aria-live="polite">
+    <div class="t" id="tip-title"></div>
+    <div class="b" id="tip-body"></div>
+  </div>
+
+  <script src="tooltip.js"></script>
+</body>
+</html>

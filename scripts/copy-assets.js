@@ -1,6 +1,7 @@
 /**
  * Копирует статические файлы в dist:
- *  - renderer (html/css);
+ *  - renderer (html/css): главное окно + HTML диалоговых окон (импорт
+ *    cookies, добавление профиля, подтверждение удаления) и окна тултипов;
  *  - main/fingerprint-preload.js (CommonJS-генератор патча отпечатка:
  *    tsc не компилирует .js, а fingerprint.ts require-ит его из dist/main).
  */
@@ -9,11 +10,19 @@ const path = require('node:path');
 
 const root = path.join(__dirname, '..');
 
-// renderer: html/css
+// renderer: html/css (главное окно + диалоговые окна + окно тултипов)
 const srcRenderer = path.join(root, 'src', 'renderer');
 const outRenderer = path.join(root, 'dist', 'renderer');
 fs.mkdirSync(outRenderer, { recursive: true });
-for (const file of ['index.html', 'styles.css']) {
+const rendererFiles = [
+  'index.html',
+  'styles.css',
+  'cookie-import.html',
+  'profile-form.html',
+  'confirm-delete.html',
+  'tooltip.html',
+];
+for (const file of rendererFiles) {
   fs.copyFileSync(path.join(srcRenderer, file), path.join(outRenderer, file));
   console.log(`copied renderer/${file} -> dist/renderer/`);
 }

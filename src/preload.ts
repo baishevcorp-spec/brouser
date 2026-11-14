@@ -18,6 +18,7 @@ import type {
   FilePickResult,
   LayoutId,
   LogEntry,
+  TooltipShowPayload,
 } from './main/types';
 import { TOOLBAR_HEIGHT, UI_GEOMETRY } from './main/layout';
 
@@ -52,6 +53,15 @@ const api: BrouserApi = {
   minimize: () => ipcRenderer.invoke('window:minimize'),
   toggleMaximize: () => ipcRenderer.invoke('window:toggle-maximize'),
   close: () => ipcRenderer.invoke('window:close'),
+
+  // Диалоговые окна поверх WebContentsView (UI-фикс) — отдельные BrowserWindow.
+  openCookieImport: (profileId) => ipcRenderer.invoke('dialog:open-cookie-import', profileId),
+  openProfileForm: () => ipcRenderer.invoke('dialog:open-profile-form'),
+  openDeleteConfirm: (profileId) => ipcRenderer.invoke('dialog:open-delete-confirm', profileId),
+
+  // Rich-тултипы: прозрачное always-on-top окно (HTML-тултипы перекрыты views).
+  tooltipShow: (payload) => ipcRenderer.send('tooltip:show', payload),
+  tooltipHide: () => ipcRenderer.send('tooltip:hide'),
 
   // События состояния UI (односторонние, P1.2 / P1.1)
   layoutReady: () => ipcRenderer.send('layout:ready'),
