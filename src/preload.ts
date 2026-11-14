@@ -3,10 +3,15 @@
  *
  * Renderer не получает Node — только IPC-мост. Полный контракт каналов
  * описан в README (раздел «IPC-контракт»).
+ *
+ * P1.1: экспортирует константы геометрии (TOOLBAR_HEIGHT / GEOMETRY) —
+ * renderer применяет их в CSS-переменные, чтобы расчёт ячеек в main
+ * и отрисовка сетки в renderer всегда совпадали.
  */
 import { contextBridge, ipcRenderer } from 'electron';
 import type { IpcRendererEvent } from 'electron';
 import type { BrouserApi, AppState, LayoutId, LogEntry } from './main/types';
+import { TOOLBAR_HEIGHT, UI_GEOMETRY } from './main/layout';
 
 /** Подписка на событие main с функцией отписки. */
 function subscribe<T>(channel: string, cb: (payload: T) => void): () => void {
@@ -18,6 +23,10 @@ function subscribe<T>(channel: string, cb: (payload: T) => void): () => void {
 }
 
 const api: BrouserApi = {
+  // Константы геометрии (P1.1) — единый источник с layout.ts в main.
+  TOOLBAR_HEIGHT,
+  GEOMETRY: UI_GEOMETRY,
+
   // Запросы состояния и команды
   getState: () => ipcRenderer.invoke('state:get'),
   addProfile: (input) => ipcRenderer.invoke('profile:add', input),
@@ -32,10 +41,9 @@ const api: BrouserApi = {
   toggleMaximize: () => ipcRenderer.invoke('window:toggle-maximize'),
   close: () => ipcRenderer.invoke('window:close'),
 
-  // Прямоугольники ячеек (односторонняя отправка)
-  sendViewBounds: (id, rect) => {
-    ipcRenderer.send('view:set-bounds', id, rect);
-  },
+  // События состояния UI (односторонние, P1.2 / P1.1)
+  layoutReady: () => ipcRenderer.send('layout:ready'),
+  setLogPanel: (open) => ipcRenderer.send('ui:log-panel', open),
 
   // События main -> renderer
   onProfilesUpdated: (cb) => subscribe<AppState>('profiles-updated', cb),

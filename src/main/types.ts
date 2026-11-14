@@ -52,6 +52,13 @@ export interface ProfileConfig {
   platform?: string;
   /** Подмена navigator.hardwareConcurrency (опционально). */
   hardwareConcurrency?: number;
+  /**
+   * Seed антидетект-шума профиля (P0.1). Опционально: если не задан —
+   * детерминированно выводится из id (хеш FNV-1a), так что отпечаток
+   * стабилен между перезапусками. Управляет шумом Canvas/Audio,
+   * выбором GPU (WebGL), hardwareConcurrency и deviceMemory.
+   */
+  fingerprintSeed?: number;
 }
 
 /** Сохраняемые размеры окна (по ТЗ достаточно width/height). */
@@ -81,6 +88,8 @@ export interface ProfileState {
   userAgentSet: boolean;
   platform: string | null;
   hardwareConcurrency: number | null;
+  /** Заданный вручную seed антидетекта (null — выводится из id автоматически). */
+  fingerprintSeed: number | null;
   /** Попадает ли профиль в первые N ячеек текущей раскладки. */
   visible: boolean;
 }
@@ -103,13 +112,43 @@ export interface LogEntry {
   message: string;
 }
 
-/** Прямоугольник в DIP-координатах окна (= CSS-пиксели renderer при zoom 1). */
+/** Прямоугольник ячейки сетки в DIP (= координаты WebContentsView в окне). */
 export interface Rect {
   x: number;
   y: number;
   width: number;
   height: number;
 }
+
+/**
+ * Геометрия интерфейса (DIP). Единый источник истины для main (layout.ts)
+ * и renderer (CSS-переменные применяются из preload) — чтобы расчёт ячеек
+ * в main и отрисовка сетки в renderer никогда не разъезжались.
+ */
+export interface UiGeometry {
+  /** Внешние отступы #app (все стороны). */
+  appPad: number;
+  /** Зазор между тулбаром и сеткой. */
+  appGap: number;
+  /** Высота панели инструментов. */
+  toolbarH: number;
+  /** Зазор между ячейками сетки. */
+  gridGap: number;
+  /** Высота шапки ячейки (имя профиля + кнопки). */
+  cellHeadH: number;
+  /** Зазор между шапкой и телом ячейки. */
+  cellGap: number;
+}
+
+/** Значения синхронны с styles.css (там — через CSS-переменные с фолбэками). */
+export const UI_GEOMETRY: UiGeometry = {
+  appPad: 10,
+  appGap: 10,
+  toolbarH: 52,
+  gridGap: 10,
+  cellHeadH: 36,
+  cellGap: 8,
+};
 
 /** Данные формы «Добавить профиль»: все поля строками, валидация в main. */
 export interface NewProfileInput {
@@ -147,8 +186,20 @@ export interface BrouserApi {
   minimize(): Promise<void>;
   toggleMaximize(): Promise<void>;
   close(): Promise<void>;
-  /** Renderer измеряет ячейку сетки и шлёт прямоугольник — main ставит туда WebContentsView. */
-  sendViewBounds(id: string, rect: Rect): void;
+
+  /** Высота тулбара (DIP) — синхронизация CSS и main (P1.1). */
+  readonly TOOLBAR_HEIGHT: number;
+  /** Полная геометрия UI — renderer применяет её в CSS-переменные. */
+  readonly GEOMETRY: UiGeometry;
+
+  /**
+   * Handshake (P1.2): renderer сообщает, что первый рендер сетки состоялся
+   * и окно имеет финальные размеры — после этого main расставляет views.
+   */
+  layoutReady(): void;
+  /** Панель журнала открыта/закрыта: main резервирует место под неё (P1.1). */
+  setLogPanel(open: boolean): void;
+
   onProfilesUpdated(cb: (state: AppState) => void): () => void;
   onLayoutChanged(cb: (layout: LayoutId) => void): () => void;
   onLogMessage(cb: (entry: LogEntry) => void): () => void;

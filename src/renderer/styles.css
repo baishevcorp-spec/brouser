@@ -12,7 +12,16 @@
   --radius-md: 12px;
   --radius-sm: 10px;
   --blur: 20px;
-  --toolbar-h: 52px;
+
+  /* Геометрия UI: фолбэки = константы UiGeometry (types.ts); renderer
+     применяет актуальные значения из preload (layout.ts) в applyGeometryVars —
+     так отрисовка здесь и расчёт ячеек в main совпадают байт-в-байт. */
+  --app-pad: 10px;   /* отступы #app */
+  --app-gap: 10px;   /* тулбар <-> сетка */
+  --toolbar-h: 52px; /* высота панели инструментов */
+  --grid-gap: 10px;  /* между ячейками */
+  --cell-head-h: 36px; /* шапка ячейки */
+  --cell-gap: 8px;   /* шапка <-> тело ячейки */
 }
 
 html[data-theme='dark'] {
@@ -98,8 +107,8 @@ body {
   display: flex;
   flex-direction: column;
   height: 100vh;
-  padding: 10px;
-  gap: 10px;
+  padding: var(--app-pad, 10px);
+  gap: var(--app-gap, 10px);
 }
 
 /* Стеклянная панель */
@@ -114,7 +123,7 @@ body {
 
 /* ---------- Панель инструментов ---------- */
 #toolbar {
-  flex: 0 0 var(--toolbar-h);
+  flex: 0 0 var(--toolbar-h, 52px);
   display: flex;
   align-items: center;
   gap: 6px;
@@ -283,7 +292,7 @@ body {
 .grid {
   flex: 1;
   display: grid;
-  gap: 10px;
+  gap: var(--grid-gap, 10px);
   min-height: 0;
   min-width: 0;
 }
@@ -291,14 +300,14 @@ body {
 .cell {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--cell-gap, 8px);
   min-height: 0;
   min-width: 0;
 }
 
 /* Шапка ячейки: имя профиля + точка статуса + кнопки */
 .cell-head {
-  flex: 0 0 36px;
+  flex: 0 0 var(--cell-head-h, 36px);
   display: flex;
   align-items: center;
   gap: 8px;
@@ -432,7 +441,7 @@ textarea { resize: vertical; min-height: 66px; }
 #logpanel {
   position: fixed;
   right: 16px;
-  top: calc(var(--toolbar-h) + 22px);
+  top: calc(var(--toolbar-h, 52px) + 22px);
   width: min(430px, calc(100vw - 32px));
   max-height: 300px;
   overflow-y: auto;

@@ -7,7 +7,9 @@
       "proxy": "http://user:pass@185.12.34.56:8080",
       "extensions": ["./extensions/avito-helper"],
       "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
-      "timezone": "Europe/Moscow"
+      "timezone": "Europe/Moscow",
+      "platform": "Win32",
+      "fingerprintSeed": 4821
     },
     {
       "id": "avito2",
@@ -15,8 +17,10 @@
       "url": "https://www.avito.ru",
       "proxy": "socks5://192.0.2.10:9050",
       "extensions": [],
-      "userAgent": "",
-      "timezone": "Europe/Moscow"
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+      "timezone": "Europe/Moscow",
+      "platform": "MacIntel",
+      "fingerprintSeed": 7342
     }
   ],
   "layout": "2x2",

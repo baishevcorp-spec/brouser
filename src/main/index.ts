@@ -2,15 +2,17 @@
  * Brouser — точка входа main-процесса.
  *
  * Создаёт frameless-окно, в которое загружается renderer (панель инструментов + сетка).
- * Ячейки сетки — это WebContentsView (новый API), которые позиционируются по
- * координатам, приходящим от renderer. Конфиг и профили — см. ProfileManager.
+ * Ячейки сетки — это WebContentsView (новый API); их геометрию с P1.1 считает
+ * main (layout.ts) по contentBounds окна. Renderer шлёт только команды
+ * (раскладка/профили/тема) и два события состояния: layout-ready (handshake)
+ * и ui:log-panel (панель журнала). Resize — throttled recompute (16мс).
  */
 import { app, BrowserWindow, ipcMain } from 'electron';
 import * as path from 'node:path';
 import { ConfigService } from './config';
 import { Logger } from './logger';
 import { ProfileManager } from './profileManager';
-import { AppState, CommandResult, LayoutId, NewProfileInput, Rect, ThemeId } from './types';
+import { AppState, CommandResult, LayoutId, NewProfileInput, ThemeId } from './types';
 
 // Только один экземпляр приложения (одна сетка сессий за раз).
 if (!app.requestSingleInstanceLock()) {
@@ -74,7 +76,11 @@ function bootstrap(): void {
       webPreferences: {
         preload: path.join(__dirname, '..', 'preload.js'),
         contextIsolation: true,
-        sandbox: true,
+        // sandbox: false — preload-у нужен require('./main/layout') для констант
+        // геометрии (единый источник с main). Изоляция страницы не страдает:
+        // nodeIntegration выключен, contextIsolation включен, страница не
+        // получает require — только preload.
+        sandbox: false,
         backgroundThrottling: false,
       },
     });
@@ -93,9 +99,24 @@ function bootstrap(): void {
         config.config.windowBounds = { width: b.width, height: b.height };
       }, 350);
     };
-    win.on('resize', persistBounds);
-    win.on('maximize', persistBounds);
-    win.on('unmaximize', persistBounds);
+
+    // P1.1: пересчёт сетки при resize — троттлинг 16мс (main-«requestAnimationFrame»):
+    // при resize views двигаются не чаще раза за кадр — без дрожания и гонок.
+    let recomputeTimer: ReturnType<typeof setTimeout> | undefined;
+    const scheduleRecompute = (): void => {
+      if (recomputeTimer !== undefined) return;
+      recomputeTimer = setTimeout(() => {
+        recomputeTimer = undefined;
+        manager?.recomputeLayout();
+      }, 16);
+    };
+    const onGeometryChange = (): void => {
+      persistBounds();
+      scheduleRecompute();
+    };
+    win.on('resize', onGeometryChange);
+    win.on('maximize', onGeometryChange);
+    win.on('unmaximize', onGeometryChange);
 
     // При закрытии окна сохраняем конфиг и корректно гасим все сессии.
     win.on('close', () => {
@@ -144,10 +165,11 @@ function bootstrap(): void {
     });
     ipcMain.handle('window:close', (): void => win?.close());
 
-    // ---------- Координаты ячеек сетки ----------
-    ipcMain.on('view:set-bounds', (_e, id: string, rect: Rect): void => {
-      manager!.setViewBounds(id, rect);
-    });
+    // ---------- События состояния UI (односторонние) ----------
+    // Handshake (P1.2): renderer закончил первый рендер сетки.
+    ipcMain.on('layout:ready', () => manager!.onLayoutReady());
+    // Панель журнала открыта/закрыта — резервируем место под неё.
+    ipcMain.on('ui:log-panel', (_e, open: boolean) => manager!.setLogPanel(!!open));
   }
 
   app.on('window-all-closed', () => {

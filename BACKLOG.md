@@ -1,127 +1,46 @@
 # Backlog
 
-Идеи и незакрытые направления Brouser. Реализованное — см. README.md и
-ROADMAP.md (фаза v1.0). Приоритеты: **P0** — блокер повседневных сценариев,
-ближайшая очередь; **P1** — заметное удобство, следующий минор; **P2** —
-позже / по спросу. Статусы: `idea` (не начато) / `в работе`.
+План работ по приоритетам. Пометка `[x]` — выполнено (см. коммиты `feat(antidetect)`,
+`feat(layout)`, `fix(compat)`).
 
----
+## P0 — Блокеры продакшена
+- [x] Canvas/WebGL/Audio fingerprint noise per-profile (P0.1) — `src/main/fingerprint.ts`,
+      `src/main/fingerprint-preload.js`; seed из `fingerprintSeed` или хеша id;
+      инъекция двойная (preload + CDP), идемпотентная.
+- [x] Client Hints заголовки в синхроне с UA (P0.2) — `sec-ch-ua`/`sec-ch-ua-mobile`/
+      `sec-ch-ua-platform` из UA; `Accept-CH` вырезается из ответов (high-entropy leak).
 
-## P0 — ближайшая очередь
+## P1 — Архитектура
+- [x] Расчёт layout в main-процессе (P1.1) — `src/main/layout.ts`,
+      `computeCells`/`UI_GEOMETRY`; resize -> throttle 16мс -> recompute;
+      renderer не шлёт координаты (канал `view:set-bounds` удалён).
+- [x] Handshake layout-ready (P1.2) — renderer шлёт `layout:ready` после первого
+      рендера; views не позиционируются до сигнала.
+- [x] Views не уничтожаются при смене раскладки (P1.3) — parking за пределами
+      окна (x:-10000, 1x1, `backgroundThrottling: false`); уничтожение только
+      при удалении профиля.
 
-| # | Идея | Статус |
-|---|---|---|
-| 1 | Редактирование профиля из UI (сейчас только добавление/удаление) | idea |
-| 2 | Полноценный антидетект-фингерпринт | idea |
+## P2 — Полировка
+- [x] CDP vs DevTools конфликт (P2.1) — detach перед openDevTools, сброс
+      `scriptAdded`, восстановление эмуляции на `devtools-closed`; плюс
+      preload-путь патча продолжает работать во время DevTools.
+- [x] macOS extensions path (P2.2) — `prepareExtensionForLoad`: копирование
+      из бандла в `userData/extensions/<имя>-<хеш>` на darwin.
+- [x] app.on('login') фильтрация по host (P2.3) — креды только при совпадении
+      `authInfo.host` с хостом прокси профиля; расхождение логируется.
+- [x] Логирование фингерпринта (P2.4) — строка
+      `fingerprint: seed=…, canvas=patched, webgl=…, ch=…` при старте профиля.
 
-**1. Редактирование профиля из UI.** Смена прокси, User-Agent, таймзоны или
-набора расширений требует правки `config.json` и перезапуска. Нужен канал
-`profile:update` по образцу `profile:add` и форма на базе существующей
-`NewProfileInput`. Ре-инициализация сессии обязательна только при смене `id`
-(меняется partition `persist:profile-<id>`); остальные поля по возможности
-применяются на лету (прокси — `ses.setProxy`, UA — `setUserAgent` + CDP).
-
-**2. Полноценный антидетект-фингерпринт.** Реализован минимальный спуфинг
-(`src/main/profileManager.ts`: `ses.setUserAgent`, CDP
-`Network.setUserAgentOverride` с `platform`, `Emulation.setTimezoneOverride`
-с повтором после навигаций, инъекция `navigator.hardwareConcurrency`). Не
-закрыто: WebGL vendor/renderer (UNMASKED_RENDERER_WEBGL), canvas noise,
-`navigator.languages`, geolocation, screen (width/height/colorDepth/
-devicePixelRatio), media devices (enumerateDevices), шрифты, AudioContext.
-Каждая подмена — опция профиля, согласованная по «личности» (ОС из UA =
-platform = шрифты). См. README, раздел «Отпечаток».
-
-## P1 — следующий минор
-
-| # | Идея | Статус |
-|---|---|---|
-| 3 | Поддержка прокси-типов с ротацией и health-check | idea |
-| 4 | Drag&drop сортировка профилей | idea |
-| 5 | Адресная строка в шапке каждой ячейки | idea |
-| 6 | Вкладки внутри ячейки (несколько табов на сессию) | idea |
-| 7 | Индикатор загрузки/статуса прокси в реальном времени (точка статуса сейчас декоративная) | idea |
-| 8 | Импорт/экспорт config.json и профилей (архив с cookies) | idea |
-| 9 | Горячие клавиши (раскладки Ctrl+1..6, перезагрузка Ctrl+R) | idea |
-
-**3. Прокси: ротация и health-check.** Периодическая проверка доступности
-(HEAD через сам `ses`, таймаут), авто-переключение на резерв, бан-лист
-мёртвых адресов с записью в журнал. Форматы строк уже покрыты
-(`src/main/proxy.ts`).
-
-**4. Drag&drop сортировка.** Порядок массива `profiles` определяет, какие
-профили попадают в первые N видимых ячеек, — сортировка мышью сразу меняет
-сетку без правки конфига; данные с `visible` уже есть в renderer.
-
-**5. Адресная строка в ячейке.** Компактный input в шапке ячейки:
-`webContents.loadURL(normalizeUrlInput(...))` (функция уже добавляет схему
-и дефолт Avito), отображение текущего URL из `did-navigate`.
-
-**6. Вкладки внутри ячейки.** Одна persistent-сессия профиля, несколько
-страниц в ячейке. Требует переработки `ManagedView` (карта tabId -> view) и
-пересчёта `view:set-bounds` для «тела» ячейки.
-
-**7. Живой индикатор статуса прокси.** Цвет точки = ок / ошибка /
-проверяется, тултип с latency. Опирается на health-check из п. 3; убирает
-главный UX-баг «белая ячейка без объяснения».
-
-**8. Импорт/экспорт.** Экспорт: `config.json` + выбранные папки сессий из
-userData одним zip. Импорт: слияние с дедупликацией `id`
-(`generateProfileId` умеет подбирать свободные).
-
-**9. Горячие клавиши.** Ctrl+1..Ctrl+6 — раскладки 1x1/1x2/2x1/2x2/3x1/1x3;
-Ctrl+R — перезагрузка ячейки в фокусе (Shift — всех). Не должны мешать
-веб-страницам (перехват только когда фокус вне webContents).
-
-## P2 — позже / по спросу
-
-| # | Идея | Статус |
-|---|---|---|
-| 10 | Tray-иконка с меню | idea |
-| 11 | Автообновления (electron-updater) | idea |
-| 12 | CI сборки через GitHub Actions (win/linux матрица) | idea |
-| 13 | Unit-тесты main-логики (vitest) | idea |
-| 14 | i18n (ru/en) | idea |
-| 15 | Поддержка MV3 service_worker-расширений — проверить ограничения | idea |
-| 16 | Размер иконок под retina | idea |
-| 17 | Отказоустойчивость: авто-restart упавших рендеров | idea |
-
-**10. Tray.** Сворачивание в трей вместо выхода, быстрое переключение
-раскладки. Сейчас «закрытие окна = выход» (`window-all-closed` -> quit).
-
-**11. Автообновления.** electron-updater поверх GitHub Releases. Подписи
-установщиков нет — на Windows обновления потребуют решения по подписи NSIS.
-
-**12. CI.** Матрица win/linux (mac при наличии runner'ов): `npm ci`,
-`npm run typecheck`, `npm run dist:*`, артефакты в Release; PAT с правами
-repo в секретах Actions.
-
-**13. Unit-тесты.** Чистые функции без Electron-импортов: `parseProxy` (все
-форматы + URL-encode в логине), `normalizeConfig`/`normalizeProfile`,
-`normalizeUrlInput`, `generateProfileId`, `splitPaths`, `parsePositiveInt`.
-
-**14. i18n.** Сейчас UI, тултипы и записи журнала на русском. Словарь ru/en +
-`app.getLocale()`; формат логов оставить без перевода (парсится скриптами).
-
-**15. MV3 service_worker.** Electron 33 грузит MV3 частично:
-`background.service_worker` не гарантируется. Проверить актуальные
-ограничения и валидировать манифест при загрузке с понятной ошибкой в журнал.
-
-**16. Retina-иконки.** Проверить чёткость иконок панели и ячеек на 2x/3x;
-при необходимости — SVG или PNG @2x.
-
-**17. Авто-restart рендеров.** `render-process-gone` сейчас только
-логируется; добавить пересоздание представления по живой сессии (partition
-сохранён на диске — данные не теряются).
-
----
-
-## Связка с ROADMAP
-
-- v1.1 = п. 1, 4, 5, 9 и health-часть п. 3/7;
-- v1.2 = п. 6, 8, 10, 12;
-- v1.3 = п. 2, 11, 13;
-- v2.0 = синхронизация/командные сценарии, embedded прокси-менеджер
-  (расширение п. 3).
-
-Порядок внутри фаз может меняться по спросу; таблица выше — текущий снимок
-приоритетов.
+## P3 — Идеи на потом
+- [ ] Профили как отдельные процессы (`--user-data-dir`) с сеткой через window-manager
+      (полная изоляция GPU-процесса на профиль).
+- [ ] Синхронизатор действий (как в Dolphin): реплей кликов/ввода во все видимые профили.
+- [ ] Импорт cookies из Opera GX / Chrome (форматы Netscape cookie.txt и DevTools-JSON).
+- [ ] Mobile-прокси rotation: смена IP по расписанию/триггеру с сохранением гео.
+- [ ] Шрифты/языки/геолокация/media devices/screen per-profile (следующие
+      поверхности антидетекта после P0).
+- [ ] WebRTC IP leak: форсирование прокси-канала (`WebRTCIPHandlingPolicy`).
+- [ ] Обновление GREASE-строк sec-ch-ua под свежие версии Chrome
+      (сейчас фиксированный `"Not_A Brand";v="24"`).
+- [ ] MV3 `service_worker` background для расширений (ограничение Electron 33).
+- [ ] UI: drag-and-drop профилей между ячейками; дублирование профиля кнопкой.
