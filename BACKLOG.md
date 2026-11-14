@@ -51,7 +51,10 @@
 - [ ] Mobile-прокси rotation: смена IP по расписанию/триггеру с сохранением гео.
 - [ ] Шрифты/языки/геолокация/media devices/screen per-profile (следующие
       поверхности антидетекта после P0).
-- [ ] WebRTC IP leak: форсирование прокси-канала (`WebRTCIPHandlingPolicy`).
+- [x] WebRTC IP leak: форсирование прокси-канала (`WebRTCIPHandlingPolicy`)
+      — app-wide switch `--force-webrtc-ip-handling-policy=disable_non_proxied_udp`
+      (UDP только через прокси; у профилей без прокси WebRTC деградирует —
+      осознанная цена отсутствия утечки IP).
 - [ ] Обновление GREASE-строк sec-ch-ua под свежие версии Chrome
       (сейчас фиксированный `"Not_A Brand";v="24"`).
 - [ ] MV3 `service_worker` background для расширений (ограничение Electron 33).

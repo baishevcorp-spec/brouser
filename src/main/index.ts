@@ -27,6 +27,13 @@ function bootstrap(): void {
   app.commandLine.appendSwitch('disable-renderer-backgrounding');
   app.commandLine.appendSwitch('disable-background-timer-throttling');
 
+  // WebRTC не должен светить локальный/прямой публичный IP (P3, антидетект):
+  // disable_non_proxied_udp разрешает UDP только через прокси-канал.
+  // Для профилей с прокси ICE-кандидаты идут через прокси (IP не утекает);
+  // для профилей без прокси WebRTC деградирует (кандидатов не будет) —
+  // Avito WebRTC не использует, а утечка IP дороже.
+  app.commandLine.appendSwitch('force-webrtc-ip-handling-policy', 'disable_non_proxied_udp');
+
   let win: BrowserWindow | null = null;
   let logger: Logger | null = null;
   let config: ConfigService | null = null;

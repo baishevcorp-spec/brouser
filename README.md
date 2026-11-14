@@ -246,6 +246,7 @@ HTTPS-прокси.** И вторая рекомендация: **резиден
 | `navigator.platform` | Из явного `platform` либо из User-Agent; «случайной» платформы не бывает | Всегда согласована с UA |
 | Intl-таймзона | JS-патч `resolvedOptions().timeZone` (дубль CDP-override на уровне движка) | `Intl.DateTimeFormat().resolvedOptions().timeZone` |
 | Client Hints | При заданном UA: `sec-ch-ua`, `sec-ch-ua-mobile`, `sec-ch-ua-platform` синхронизируются с версией Chrome из UA; `Accept-CH` вырезается из ответов | Chromium не рассекречивает high-entropy хинты реальной версии Electron |
+| WebRTC ICE-кандидаты | Политика всего приложения `disable_non_proxied_udp`: UDP только через прокси-канал (switch `--force-webrtc-ip-handling-policy`) | Локальный/прямой публичный IP не утекает; у профилей без прокси WebRTC-кандидатов нет (деградация — осознанная цена) |
 
 **Seed.** Число `fingerprintSeed` в конфиге (или хеш id). Правила:
 перезагрузка профиля -> тот же отпечаток; другой профиль -> другой отпечаток;
@@ -280,6 +281,9 @@ attached»). Brouser при открытии DevTools временно откл�
    продолжают работать.
 5. В `app.log` при старте каждого профиля есть строка вида:
    `[avito1] fingerprint: seed=4821, canvas=patched, webgl=ANGLE (Intel, Intel(R) UHD Graphics 630, D3D11), platform=Win32, cores=8, mem=8, ch=chrome-130`.
+6. Откройте `https://browserleaks.com/webrtc` в профиле с прокси — в таблице
+   ICE-кандидатов не должно быть вашего реального IP (кандидаты идут через
+   прокси либо отсутствуют).
 
 **Честное предупреждение.** Антидетект — не только отпечаток. Без прокси и
 с одинаковым IP даже идеальный фингерпринт не спасёт: Avito смотрит на IP
@@ -520,8 +524,11 @@ IPC с версии 0.2 (P1.1) — геометрию считает main.
   GREASE-строк sec-ch-ua под свежие версии Chrome) — это отдельный
   релизный цикл, см. BACKLOG/ROADMAP.
 - **Не подменяются:** шрифты, `navigator.languages`, геолокация,
-  media devices (enumeration), `screen.*`, WebRTC ICE-кандидаты (кроме
-  прокси-канала), AudioContext `AnalyserNode`-поверхности.
+  media devices (enumeration), `screen.*`, AudioContext
+  `AnalyserNode`-поверхности. WebRTC-кандидаты не подменяются, а
+  принудительно проксируются (`disable_non_proxied_udp`, см.
+  [Антидетект](#антидетект)) — у профилей без прокси WebRTC звонки/стримы
+  работать не будут.
 - **macOS:** расширения из бандла требуют копирования в userData
   (происходит автоматически, см. [Расширения -> macOS](#macos)).
 - **Пустой `Accept-CH`** вырезается только у профилей с заданным UA —
