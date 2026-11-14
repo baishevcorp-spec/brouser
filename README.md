@@ -32,6 +32,10 @@ Brouser — десктопное мульти-аккаунтное прилож�
   `manifest.json`), свой набор на профиль; ошибка одного не мешает остальным.
   На macOS расширения из бандла автоматически копируются в userData
   (обход Gatekeeper).
+- **Дублирование профиля одной кнопкой.** Кнопка «копия» в шапке ячейки
+  копирует URL, прокси, расширения, UA, таймзону и платформу; дубликат
+  получает новый id (отдельная persistent-сессия, стартует «чистым») и
+  собственный авто-seed отпечатка — клоны не светят одинаково.
 - **Антидетект per-profile (P0).** Детерминированный шум Canvas и
   AudioContext, подмена WebGL vendor/renderer из реалистичных ANGLE-строк,
   `navigator.hardwareConcurrency`/`deviceMemory`, синхронные с UA Client
@@ -426,6 +430,7 @@ Renderer -> main (через `ipcRenderer.invoke`, методы `window.brouser`
 | `state:get` | `getState()` | полное состояние `AppState` |
 | `profile:add` | `addProfile(input)` | добавить профиль (валидация в main) |
 | `profile:remove` | `removeProfile(id)` | удалить профиль: безопасный teardown представления + preload-файл отпечатка |
+| `profile:duplicate` | `duplicateProfile(id)` | дублировать профиль (настройки копируются, id/seed новые) |
 | `layout:set` | `setLayout(layout)` | сменить раскладку (views перепозиционируются, не уничтожаются) |
 | `theme:set` | `setTheme(theme)` | сменить тему |
 | `views:reload-all` | `reloadAll()` | перезагрузить все представления |

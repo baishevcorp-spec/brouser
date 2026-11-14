@@ -177,6 +177,8 @@ export interface BrouserApi {
   getState(): Promise<AppState>;
   addProfile(input: NewProfileInput): Promise<CommandResult>;
   removeProfile(id: string): Promise<CommandResult>;
+  /** Дублировать профиль: настройки/прокси копируются, id и отпечаток — новые. */
+  duplicateProfile(id: string): Promise<CommandResult>;
   setLayout(layout: LayoutId): Promise<CommandResult>;
   reloadAll(): Promise<void>;
   reloadView(id: string): Promise<void>;

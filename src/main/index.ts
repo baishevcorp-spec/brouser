@@ -145,6 +145,9 @@ function bootstrap(): void {
     ipcMain.handle('profile:remove', (_e, id: string): Promise<CommandResult> =>
       manager!.removeProfile(id),
     );
+    ipcMain.handle('profile:duplicate', (_e, id: string): Promise<CommandResult> =>
+      manager!.duplicateProfile(id),
+    );
     ipcMain.handle('layout:set', (_e, layout: LayoutId): CommandResult =>
       manager!.setLayout(layout),
     );

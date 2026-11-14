@@ -28,6 +28,7 @@ const ICONS: Record<string, string> = {
   plus: S('<path d="M12 5v14M5 12h14"/>'),
   trash: S('<path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M10 11v6M14 11v6"/>'),
   rotate: S('<path d="M20 12a8 8 0 1 1-2.9-6.2"/><path d="M20 4v4h-4"/>'),
+  copy: S('<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/>'),
   save: S('<path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8"/><path d="M7 3v5h8"/>'),
   palette: S('<path d="M12 2s6 6.6 6 11a6 6 0 0 1-12 0c0-4.4 6-11 6-11z"/>'),
   logs: S('<path d="M4 6h16M4 12h11M4 18h7"/>'),
@@ -271,7 +272,14 @@ function buildCell(p: ProfileState): HTMLElement {
 
   head.append(dot, title);
 
-  // Кнопки шапки: обновить / devtools / удалить.
+  // Кнопки шапки: дублировать / обновить / devtools / удалить.
+  const btnCopy = iconButton('copy', 'Дублировать профиль (настройки и прокси копируются, отпечаток будет свой)', 'top');
+  btnCopy.addEventListener('click', () => {
+    void api.duplicateProfile(p.id).then((res) => {
+      toast(res.ok ? 'ok' : 'err');
+    });
+  });
+
   const btnReload = iconButton('rotate', 'Обновить', 'top');
   btnReload.addEventListener('click', () => void api.reloadView(p.id));
 
@@ -295,7 +303,7 @@ function buildCell(p: ProfileState): HTMLElement {
     }
   });
 
-  head.append(btnReload, btnDev, btnDel);
+  head.append(btnCopy, btnReload, btnDev, btnDel);
 
   // Клик по шапке выделяет профиль (для кнопки удаления в тулбаре).
   head.addEventListener('click', (e) => {

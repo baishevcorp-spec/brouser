@@ -230,6 +230,38 @@ export class ProfileManager {
     return { ok: true };
   }
 
+  /**
+   * Дублирование профиля (P3): копируются URL, прокси, расширения, UA,
+   * таймзона, платформа и hardwareConcurrency. НЕ копируются:
+   *   - id — новый (generateProfileId), т.е. отдельная persistent-сессия;
+   *   - fingerprintSeed — новый id -> свой авто-seed -> ДРУГОЙ стабильный
+   *     отпечаток (клоны не должны светить одинаково для антифрода).
+   * Логин/куки не переносятся: дубликат стартует с чистой сессией.
+   */
+  async duplicateProfile(id: string): Promise<CommandResult> {
+    const src = this.config.config.profiles.find((p) => p.id === id);
+    if (!src) return { ok: false, error: 'Профиль не найден' };
+    const copy: ProfileConfig = {
+      id: this.config.generateProfileId(src.name),
+      name: `${src.name} (копия)`,
+      url: src.url,
+      proxy: src.proxy,
+      extensions: [...(src.extensions ?? [])],
+      userAgent: src.userAgent,
+      timezone: src.timezone,
+      platform: src.platform,
+      hardwareConcurrency: src.hardwareConcurrency,
+    };
+    this.config.config.profiles.push(copy);
+    this.config.save();
+    this.log.info(`профиль дублирован: ${src.id} -> ${copy.id} (${copy.name})`);
+    this.notify();
+    // Новый профиль попадает в сетку, если есть свободная ячейка,
+    // иначе будет создан при смене раскладки (правила жизни профилей).
+    this.recomputeLayout();
+    return { ok: true };
+  }
+
   setLayout(layout: LayoutId): CommandResult {
     if (!LAYOUTS[layout]) return { ok: false, error: 'Неизвестная раскладка' };
     if (this.config.config.layout === layout) return { ok: true };

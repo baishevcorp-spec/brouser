@@ -31,6 +31,7 @@ const api: BrouserApi = {
   getState: () => ipcRenderer.invoke('state:get'),
   addProfile: (input) => ipcRenderer.invoke('profile:add', input),
   removeProfile: (id) => ipcRenderer.invoke('profile:remove', id),
+  duplicateProfile: (id) => ipcRenderer.invoke('profile:duplicate', id),
   setLayout: (layout) => ipcRenderer.invoke('layout:set', layout),
   setTheme: (theme) => ipcRenderer.invoke('theme:set', theme),
   reloadAll: () => ipcRenderer.invoke('views:reload-all'),
