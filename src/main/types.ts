@@ -189,6 +189,42 @@ export interface CommandResult {
   error?: string;
 }
 
+/** Данные формы импорта cookies (P3): текст cookies + параметры импорта. */
+export interface CookieImportInput {
+  /** Полный текст: Netscape cookies.txt или DevTools-JSON. */
+  source: string;
+  /** Формат: auto (по содержимому) | netscape | json. */
+  format: 'auto' | 'netscape' | 'json';
+  /** Фильтр доменов (строка через запятую/пробел); пусто — импортировать все. */
+  domains?: string;
+}
+
+/** Итог импорта cookies: счётчики по каждой причине отсева. */
+export interface CookieImportResult {
+  ok: boolean;
+  error?: string;
+  /** Сколько cookies найдено в источнике. */
+  total: number;
+  /** Успешно установлено в сессию профиля. */
+  imported: number;
+  /** Отсечено фильтром домена. */
+  skippedDomain: number;
+  /** Пропущено как истёкшее. */
+  expired: number;
+  /** Ошибки cookies.set (Chromium отверг отдельные cookies). */
+  failed: number;
+}
+
+/** Результат диалога выбора файла cookies (IPC cookies:pick-file). */
+export interface FilePickResult {
+  ok: boolean;
+  error?: string;
+  /** Имя файла (для индикации в UI). */
+  name?: string;
+  /** Содержимое файла (≤ 10 МБ, utf-8). */
+  content?: string;
+}
+
 /**
  * API, который preload экспортирует в renderer как window.brouser.
  * Описание каналов см. в README (раздел «IPC-контракт»).
@@ -199,6 +235,10 @@ export interface BrouserApi {
   removeProfile(id: string): Promise<CommandResult>;
   /** Дублировать профиль: настройки/прокси копируются, id и отпечаток — новые. */
   duplicateProfile(id: string): Promise<CommandResult>;
+  /** Импорт cookies (Netscape/JSON) в сессию профиля (P3). */
+  importCookies(profileId: string, input: CookieImportInput): Promise<CookieImportResult>;
+  /** Диалог выбора файла cookies.txt/.json и его чтение (≤ 10 МБ). */
+  pickCookieFile(): Promise<FilePickResult>;
   setLayout(layout: LayoutId): Promise<CommandResult>;
   reloadAll(): Promise<void>;
   reloadView(id: string): Promise<void>;

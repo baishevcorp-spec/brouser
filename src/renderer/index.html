@@ -95,6 +95,31 @@
     </form>
   </div>
 
+  <!-- ===== Модальное окно «Импорт cookies» ===== -->
+  <div id="cookies-overlay" class="overlay" hidden>
+    <form id="cookies-modal" class="glass card" novalidate>
+      <div class="modal-head">
+        <button type="button" id="cf-close" class="ibtn sm" data-icon="x" data-tip="Закрыть" aria-label="Закрыть"></button>
+      </div>
+      <div class="modal-title" id="cf-title">Импорт cookies</div>
+      <div class="file-row">
+        <button type="button" id="cf-browse" class="ibtn sm accent" data-icon="file" data-tip="Выбрать файл cookies.txt / .json (до 10 МБ)" aria-label="Выбрать файл"></button>
+        <span id="cf-file-name" class="hint">файл не выбран — вставьте cookies текстом ниже</span>
+      </div>
+      <textarea id="cf-text" rows="7" spellcheck="false" placeholder="Netscape cookies.txt или DevTools-JSON (EditThisCookie) — формат определяется автоматически"></textarea>
+      <input id="cf-domain" type="text" placeholder="Фильтр домена, напр. avito.ru (пусто — все)" autocomplete="off" data-tip="Импортируются куки этого домена и его поддоменов; куки посторонних сайтов из общего экспорта — нет">
+      <label class="checkbox-row">
+        <input type="checkbox" id="cf-reload" checked>
+        <span>Перезагрузить страницу профиля после импорта</span>
+      </label>
+      <div id="cf-status" class="hint" hidden></div>
+      <div class="modal-actions">
+        <button type="button" id="cf-cancel" class="ibtn sm" data-icon="x" data-tip="Отмена" aria-label="Отмена"></button>
+        <button type="submit" id="cf-import" class="ibtn sm accent" data-icon="check" data-tip="Импортировать" aria-label="Импортировать"></button>
+      </div>
+    </form>
+  </div>
+
   <!-- ===== Журнал ===== -->
   <div id="logpanel" class="glass card" hidden aria-label="Журнал событий"></div>
 

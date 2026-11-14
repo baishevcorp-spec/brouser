@@ -22,6 +22,8 @@ import { app, BrowserWindow, Session, session, WebContentsView } from 'electron'
 import {
   AppState,
   CommandResult,
+  CookieImportInput,
+  CookieImportResult,
   LayoutId,
   LAYOUTS,
   NewProfileInput,
@@ -33,6 +35,13 @@ import { ConfigService, normalizeUrlInput } from './config';
 import { Logger } from './logger';
 import { parseProxy, ProxyInfo } from './proxy';
 import { applyClientHints, applyFingerprint, FingerprintSpec, removeFingerprintPreload } from './fingerprint';
+import {
+  domainMatches,
+  NormalizedCookie,
+  parseCookieText,
+  splitDomains,
+  toCookieSetDetails,
+} from './cookies';
 import { Cell, computeCells, logPanelReserve, PARKED } from './layout';
 
 /** Внутреннее описание активного представления. */
@@ -280,6 +289,111 @@ export class ProfileManager {
     this.emit('layout-changed', layout);
     this.notify();
     return { ok: true };
+  }
+
+  // ------------------------------------------------------------------
+  // Импорт cookies (P3)
+  // ------------------------------------------------------------------
+
+  /**
+   * Импорт cookies в сессию профиля (persist:profile-<id>) из текста
+   * cookies.txt (Netscape) или DevTools-JSON. Работает и когда представление
+   * профиля ещё не создано: сессия поднимается с диска сама, куки лягут
+   * на место и применятся при следующей загрузке страницы.
+   *
+   * Истёкшие cookies не устанавливаются; фильтр доменов (если задан)
+   * отсекает посторонние куки экспорта. Установка — батчами по 200,
+   * ошибка отдельного cookie не валит импорт.
+   */
+  async importCookies(profileId: string, input: CookieImportInput): Promise<CookieImportResult> {
+    const empty: CookieImportResult = {
+      ok: false,
+      total: 0,
+      imported: 0,
+      skippedDomain: 0,
+      expired: 0,
+      failed: 0,
+    };
+    const profile = this.config.config.profiles.find((p) => p.id === profileId);
+    if (!profile) return { ...empty, error: 'Профиль не найден' };
+
+    const source = (input.source || '').trim();
+    if (!source) return { ...empty, error: 'Пустой ввод — вставьте cookies или выберите файл' };
+    if (source.length > 16 * 1024 * 1024) return { ...empty, error: 'Текст больше 16 МБ' };
+
+    let parsed: ReturnType<typeof parseCookieText>;
+    try {
+      parsed = parseCookieText(source, input.format || 'auto');
+    } catch (err) {
+      return { ...empty, error: String((err as Error).message ?? err) };
+    }
+
+    const filters = splitDomains(input.domains ?? '');
+    const nowSec = Math.floor(Date.now() / 1000);
+    const target: NormalizedCookie[] = [];
+    let skippedDomain = 0;
+    let expired = 0;
+    for (const c of parsed.cookies) {
+      if (filters.length > 0 && !filters.some((f) => domainMatches(c.domain, f))) {
+        skippedDomain++;
+        continue;
+      }
+      if (c.expirationDate !== undefined && c.expirationDate <= nowSec) {
+        expired++;
+        continue;
+      }
+      target.push(c);
+    }
+
+    if (target.length === 0) {
+      return {
+        ...empty,
+        total: parsed.cookies.length,
+        skippedDomain,
+        expired,
+        error:
+          skippedDomain > 0
+            ? `Ни один cookie не прошёл фильтр доменов (${filters.join(', ')})`
+            : expired > 0
+              ? 'Все cookies из источника уже истекли'
+              : 'В источнике нет подходящих cookies',
+      };
+    }
+
+    // Та же partition, что и у представления профиля — куки попадают
+    // в его persistent-хранилище.
+    const ses = session.fromPartition(`persist:profile-${profile.id}`);
+    let imported = 0;
+    let failed = 0;
+    const CHUNK = 200;
+    for (let i = 0; i < target.length; i += CHUNK) {
+      const batch = target.slice(i, i + CHUNK);
+      const results = await Promise.allSettled(batch.map((c) => ses.cookies.set(toCookieSetDetails(c))));
+      for (const r of results) {
+        if (r.status === 'fulfilled') imported++;
+        else failed++;
+      }
+    }
+
+    const summary =
+      `cookies: импортировано ${imported}/${parsed.cookies.length} (${parsed.format})` +
+      (filters.length ? `, фильтр «${filters.join(', ')}»` : '') +
+      (expired ? `, истёкших пропущено ${expired}` : '') +
+      (skippedDomain ? `, чужих доменов пропущено ${skippedDomain}` : '') +
+      (failed ? `, ошибок ${failed}` : '') +
+      (parsed.invalid ? `, битых строк ${parsed.invalid}` : '');
+    if (imported > 0) this.log.info(`[${profile.id}] ${summary}`);
+    else this.log.warn(`[${profile.id}] ${summary}`);
+
+    return {
+      ok: imported > 0,
+      error: imported > 0 ? undefined : 'Ни один cookie не установлен (см. журнал)',
+      total: parsed.cookies.length,
+      imported,
+      skippedDomain,
+      expired,
+      failed,
+    };
   }
 
   setTheme(theme: ThemeId): CommandResult {

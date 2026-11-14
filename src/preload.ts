@@ -10,7 +10,15 @@
  */
 import { contextBridge, ipcRenderer } from 'electron';
 import type { IpcRendererEvent } from 'electron';
-import type { BrouserApi, AppState, LayoutId, LogEntry } from './main/types';
+import type {
+  AppState,
+  BrouserApi,
+  CookieImportInput,
+  CookieImportResult,
+  FilePickResult,
+  LayoutId,
+  LogEntry,
+} from './main/types';
 import { TOOLBAR_HEIGHT, UI_GEOMETRY } from './main/layout';
 
 /** Подписка на событие main с функцией отписки. */
@@ -32,6 +40,8 @@ const api: BrouserApi = {
   addProfile: (input) => ipcRenderer.invoke('profile:add', input),
   removeProfile: (id) => ipcRenderer.invoke('profile:remove', id),
   duplicateProfile: (id) => ipcRenderer.invoke('profile:duplicate', id),
+  importCookies: (profileId, input) => ipcRenderer.invoke('cookies:import', profileId, input),
+  pickCookieFile: () => ipcRenderer.invoke('cookies:pick-file'),
   setLayout: (layout) => ipcRenderer.invoke('layout:set', layout),
   setTheme: (theme) => ipcRenderer.invoke('theme:set', theme),
   reloadAll: () => ipcRenderer.invoke('views:reload-all'),

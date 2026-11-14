@@ -7,12 +7,22 @@
  * (раскладка/профили/тема) и два события состояния: layout-ready (handshake)
  * и ui:log-panel (панель журнала). Resize — throttled recompute (16мс).
  */
-import { app, BrowserWindow, ipcMain } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain } from 'electron';
+import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { ConfigService } from './config';
 import { Logger } from './logger';
 import { ProfileManager } from './profileManager';
-import { AppState, CommandResult, LayoutId, NewProfileInput, ThemeId } from './types';
+import {
+  AppState,
+  CommandResult,
+  CookieImportInput,
+  CookieImportResult,
+  FilePickResult,
+  LayoutId,
+  NewProfileInput,
+  ThemeId,
+} from './types';
 
 // Только один экземпляр приложения (одна сетка сессий за раз).
 if (!app.requestSingleInstanceLock()) {
@@ -148,6 +158,40 @@ function bootstrap(): void {
     ipcMain.handle('profile:duplicate', (_e, id: string): Promise<CommandResult> =>
       manager!.duplicateProfile(id),
     );
+
+    // Импорт cookies (P3): текст cookies.txt/JSON -> сессия профиля.
+    ipcMain.handle(
+      'cookies:import',
+      (_e, profileId: string, input: CookieImportInput): Promise<CookieImportResult> =>
+        manager!.importCookies(profileId, input),
+    );
+    // Диалог выбора файла cookies (cookies.txt / .json, ≤ 10 МБ) и его чтение.
+    // Возврат — в renderer: текст попадает в textarea модалки (можно отредактировать).
+    ipcMain.handle('cookies:pick-file', async (): Promise<FilePickResult> => {
+      try {
+        const parent = win && !win.isDestroyed() ? win : null;
+        const options: Electron.OpenDialogOptions = {
+          title: 'Импорт cookies — выберите файл',
+          filters: [
+            { name: 'Cookies (cookies.txt, JSON)', extensions: ['txt', 'json'] },
+            { name: 'Все файлы', extensions: ['*'] },
+          ],
+          properties: ['openFile'],
+        };
+        const res = parent ? await dialog.showOpenDialog(parent, options) : await dialog.showOpenDialog(options);
+        if (res.canceled || res.filePaths.length === 0) return { ok: false, error: 'Отменено' };
+        const filePath = res.filePaths[0] as string;
+        const stat = fs.statSync(filePath);
+        if (stat.size > 10 * 1024 * 1024) {
+          return { ok: false, error: 'Файл больше 10 МБ — экспортируйте только нужный сайт' };
+        }
+        const content = fs.readFileSync(filePath, 'utf8');
+        if (!content.trim()) return { ok: false, error: 'Файл пуст' };
+        return { ok: true, name: path.basename(filePath), content };
+      } catch (err) {
+        return { ok: false, error: String((err as Error).message ?? err) };
+      }
+    });
     ipcMain.handle('layout:set', (_e, layout: LayoutId): CommandResult =>
       manager!.setLayout(layout),
     );

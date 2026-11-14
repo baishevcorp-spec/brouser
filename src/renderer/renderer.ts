@@ -10,7 +10,7 @@
  *    отрисовка совпадала с расчётом ячеек в main байт-в-байт.
  */
 import { LAYOUTS, THEMES } from '../main/types';
-import type { AppState, NewProfileInput, ProfileState, ThemeId } from '../main/types';
+import type { AppState, CookieImportInput, NewProfileInput, ProfileState, ThemeId } from '../main/types';
 
 const api = window.brouser;
 
@@ -44,6 +44,8 @@ const ICONS: Record<string, string> = {
   'grid-2x2': G('<rect x="4" y="4" width="7" height="7" rx="2.5" fill="currentColor"/><rect x="13" y="4" width="7" height="7" rx="2.5" fill="currentColor" opacity=".45"/><rect x="4" y="13" width="7" height="7" rx="2.5" fill="currentColor" opacity=".45"/><rect x="13" y="13" width="7" height="7" rx="2.5" fill="currentColor"/>'),
   'grid-3x1': G('<rect x="4" y="4" width="16" height="5" rx="2" fill="currentColor"/><rect x="4" y="10" width="16" height="5" rx="2" fill="currentColor" opacity=".45"/><rect x="4" y="16" width="16" height="5" rx="2" fill="currentColor" opacity=".45"/>'),
   'grid-1x3': G('<rect x="4" y="4" width="5" height="16" rx="2" fill="currentColor"/><rect x="10" y="4" width="5" height="16" rx="2" fill="currentColor" opacity=".45"/><rect x="16" y="4" width="5" height="16" rx="2" fill="currentColor" opacity=".45"/>'),
+  cookies: S('<circle cx="12" cy="12" r="9"/><path d="M9 10h.01M14.5 8.5h.01M15.5 14h.01M9.5 15h.01M12 12h.01"/>'),
+  file: S('<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/>'),
 };
 
 /** Вставляет иконки во все элементы с data-icon. */
@@ -61,6 +63,10 @@ function mountIcons(root: ParentNode = document): void {
 let state: AppState = { profiles: [], layout: '2x2', theme: 'dark', capacity: 4, logs: [] };
 let selectedId: string | null = null;
 let logOpen = false;
+/** Профиль, в который открыт диалог импорта cookies. */
+let cookieProfileId: string | null = null;
+/** Импорт в процессе (кнопка заблокирована). */
+let cookieImporting = false;
 
 const gridEl = document.getElementById('grid') as HTMLElement;
 const toolbarEl = document.getElementById('toolbar') as HTMLElement;
@@ -80,6 +86,18 @@ const fExt = document.getElementById('f-ext') as HTMLTextAreaElement;
 const fUa = document.getElementById('f-ua') as HTMLInputElement;
 const fTz = document.getElementById('f-tz') as HTMLInputElement;
 
+// Модалка импорта cookies (P3).
+const cookiesOverlayEl = document.getElementById('cookies-overlay') as HTMLElement;
+const cookiesFormEl = document.getElementById('cookies-modal') as HTMLFormElement;
+const cfTitleEl = document.getElementById('cf-title') as HTMLElement;
+const cfTextEl = document.getElementById('cf-text') as HTMLTextAreaElement;
+const cfDomainEl = document.getElementById('cf-domain') as HTMLInputElement;
+const cfReloadEl = document.getElementById('cf-reload') as HTMLInputElement;
+const cfStatusEl = document.getElementById('cf-status') as HTMLElement;
+const cfFileNameEl = document.getElementById('cf-file-name') as HTMLElement;
+const cfBrowseBtn = document.getElementById('cf-browse') as HTMLButtonElement;
+const cfImportBtn = document.getElementById('cf-import') as HTMLButtonElement;
+
 // ------------------------------------------------------------------
 // Запуск
 // ------------------------------------------------------------------
@@ -88,6 +106,7 @@ document.addEventListener('DOMContentLoaded', () => {
   mountIcons();
   bindToolbar();
   bindModal();
+  bindCookiesModal();
 
   // Геометрия из preload -> CSS-переменные (P1.1): отрисовка в renderer
   // и расчёт ячеек в main используют один источник констант.
@@ -272,13 +291,17 @@ function buildCell(p: ProfileState): HTMLElement {
 
   head.append(dot, title);
 
-  // Кнопки шапки: дублировать / обновить / devtools / удалить.
+  // Кнопки шапки: дублировать / импорт cookies / обновить / devtools / удалить.
   const btnCopy = iconButton('copy', 'Дублировать профиль (настройки и прокси копируются, отпечаток будет свой)', 'top');
   btnCopy.addEventListener('click', () => {
     void api.duplicateProfile(p.id).then((res) => {
       toast(res.ok ? 'ok' : 'err');
     });
   });
+
+  // P3: импорт cookies (cookies.txt / DevTools-JSON) в сессию профиля.
+  const btnCookies = iconButton('cookies', 'Импорт cookies (cookies.txt / DevTools-JSON) — перенос залогиненной сессии из Chrome / Opera GX', 'top');
+  btnCookies.addEventListener('click', () => openCookiesModal(p));
 
   const btnReload = iconButton('rotate', 'Обновить', 'top');
   btnReload.addEventListener('click', () => void api.reloadView(p.id));
@@ -303,7 +326,7 @@ function buildCell(p: ProfileState): HTMLElement {
     }
   });
 
-  head.append(btnCopy, btnReload, btnDev, btnDel);
+  head.append(btnCopy, btnCookies, btnReload, btnDev, btnDel);
 
   // Клик по шапке выделяет профиль (для кнопки удаления в тулбаре).
   head.addEventListener('click', (e) => {
@@ -401,6 +424,7 @@ function bindModal(): void {
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
       if (!overlayEl.hidden) closeModal();
+      else if (!cookiesOverlayEl.hidden) closeCookiesModal();
       else if (logOpen) {
         logOpen = false;
         logsBtn.setAttribute('aria-expanded', 'false');
@@ -408,6 +432,122 @@ function bindModal(): void {
         api.setLogPanel(false);
       }
     }
+  });
+}
+
+// ------------------------------------------------------------------
+// Модальное окно «Импорт cookies» (P3)
+// ------------------------------------------------------------------
+
+/** Хост URL профиля (без www) — предзаполнение фильтра домена. */
+function hostFromProfileUrl(url: string): string {
+  try {
+    let host = new URL(url).hostname.toLowerCase();
+    if (host.startsWith('www.')) host = host.slice(4);
+    return host;
+  } catch {
+    return '';
+  }
+}
+
+function openCookiesModal(p: ProfileState): void {
+  cookieProfileId = p.id;
+  cookieImporting = false;
+  cfTitleEl.textContent = `Импорт cookies — ${p.name}`;
+  cfTextEl.value = '';
+  // Фильтр по умолчанию — хост профиля: из общего экспорта браузера
+  // берём только куки «своего» сайта (avito.ru), остальное не тащим.
+  const host = hostFromProfileUrl(p.url);
+  cfDomainEl.value = host;
+  cfReloadEl.checked = true;
+  cfStatusEl.hidden = true;
+  cfStatusEl.textContent = '';
+  cfStatusEl.classList.remove('ok', 'err');
+  cfFileNameEl.textContent = 'файл не выбран — вставьте cookies текстом ниже';
+  cookiesOverlayEl.hidden = false;
+  cfBrowseBtn.focus();
+}
+
+function closeCookiesModal(): void {
+  if (cookieImporting) return; // не закрывать посреди импорта
+  cookiesOverlayEl.hidden = true;
+  cookieProfileId = null;
+}
+
+function setCookieStatus(kind: 'ok' | 'err', text: string): void {
+  cfStatusEl.hidden = false;
+  cfStatusEl.classList.remove('ok', 'err');
+  cfStatusEl.classList.add(kind);
+  cfStatusEl.textContent = text;
+}
+
+function bindCookiesModal(): void {
+  document.getElementById('cf-close')?.addEventListener('click', closeCookiesModal);
+  document.getElementById('cf-cancel')?.addEventListener('click', closeCookiesModal);
+  cookiesOverlayEl.addEventListener('mousedown', (e) => {
+    if (e.target === cookiesOverlayEl) closeCookiesModal();
+  });
+
+  // Выбор файла в нативном диалоге: main читает его (≤ 10 МБ) и отдаёт
+  // текст — кладём в textarea, чтобы перед импортом можно было посмотреть/подрезать.
+  cfBrowseBtn.addEventListener('click', () => {
+    if (cookieImporting) return;
+    void api.pickCookieFile().then((res) => {
+      if (!res.ok) {
+        if (res.error && res.error !== 'Отменено') setCookieStatus('err', res.error);
+        return;
+      }
+      cfTextEl.value = res.content ?? '';
+      cfFileNameEl.textContent = res.name ?? 'файл';
+      setCookieStatus('ok', `Загружен файл «${res.name}» — проверьте фильтр домена и нажмите «Импортировать»`);
+    });
+  });
+
+  cookiesFormEl.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const id = cookieProfileId;
+    if (!id || cookieImporting) return;
+    const source = cfTextEl.value.trim();
+    if (!source) {
+      setCookieStatus('err', 'Вставьте cookies или выберите файл');
+      return;
+    }
+    const input: CookieImportInput = {
+      source,
+      format: 'auto',
+      domains: cfDomainEl.value.trim(),
+    };
+    const doReload = cfReloadEl.checked;
+    cookieImporting = true;
+    cfImportBtn.disabled = true;
+    void api
+      .importCookies(id, input)
+      .then((res) => {
+        if (res.ok) {
+          const parts = [`Импортировано ${res.imported} из ${res.total}`];
+          if (res.skippedDomain > 0) parts.push(`чужих доменов пропущено ${res.skippedDomain}`);
+          if (res.expired > 0) parts.push(`истёкших пропущено ${res.expired}`);
+          if (res.failed > 0) parts.push(`ошибок ${res.failed}`);
+          setCookieStatus('ok', parts.join(' — '));
+          toast('ok');
+          // Перезагрузка страницы: куки применяются к живому представлению.
+          // Невидимому профилю перезагрузка не нужна — куки лягут в его
+          // сессию и применятся при открытии ячейки.
+          const visible = state.profiles.find((x) => x.id === id)?.visible ?? false;
+          if (doReload && visible) void api.reloadView(id);
+        } else {
+          setCookieStatus('err', res.error ?? 'Импорт не удался');
+          toast('err');
+        }
+      })
+      .catch((err) => {
+        setCookieStatus('err', String(err));
+        toast('err');
+      })
+      .finally(() => {
+        cookieImporting = false;
+        cfImportBtn.disabled = false;
+      });
   });
 }
 
