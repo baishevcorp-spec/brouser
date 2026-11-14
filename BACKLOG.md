@@ -31,6 +31,18 @@
 - [x] Логирование фингерпринта (P2.4) — строка
       `fingerprint: seed=…, canvas=patched, webgl=…, ch=…` при старте профиля.
 
+## P2.5 — Горячие фиксы (регрессии)
+- [x] **Краш при удалении профиля на Windows/Electron 33** (crashpad,
+      `target closed while handling command`): порядок teardown
+      `removeChildView -> debugger.detach -> webContents.close()`, после
+      `close()` — ни одного обращения к webContents; флаг `closing` глушит
+      отложенные обработчики (did-navigate, devtools-closed, in-flight
+      CDP-эмуляция) и ранний выход из createView; preload-файл отпечатка
+      (`fingerprint-preloads/<id>.js`) удаляется вместе с профилем.
+- [x] Пустой конфиг (0 профилей): `recomputeLayout` — безопасный no-op
+      (деление только на константы раскладки), модалка «Добавить» работает,
+      новый профиль грузится в первую ячейку.
+
 ## P3 — Идеи на потом
 - [ ] Профили как отдельные процессы (`--user-data-dir`) с сеткой через window-manager
       (полная изоляция GPU-процесса на профиль).

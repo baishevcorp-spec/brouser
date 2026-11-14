@@ -231,6 +231,27 @@ export function applyFingerprint(ses: Session, profile: ProfileConfig, log?: Log
   return spec;
 }
 
+/**
+ * Удаляет сгенерированный preload-файл профиля
+ * (userData/fingerprint-preloads/<id>.js).
+ *
+ * Вызывается при удалении профиля: сессия и представление гаснут,
+ * файл-инъекция больше никогда не понадобится — иначе в userData
+ * копится мёртвый мусор. Ошибки не бросает (удаление профиля не должно
+ * падать из-за файловой системы).
+ */
+export function removeFingerprintPreload(profile: ProfileConfig, log?: Logger): void {
+  try {
+    const file = getPreloadPath(profile);
+    if (fs.existsSync(file)) {
+      fs.unlinkSync(file);
+      log?.info(`[${profile.id}] preload-файл отпечатка удалён`);
+    }
+  } catch (err) {
+    log?.warn(`[${profile.id}] не удалось удалить preload-файл отпечатка: ${String(err)}`);
+  }
+}
+
 // ------------------------------------------------------------------
 // Client Hints в синхроне с UA (путь P0.2)
 // ------------------------------------------------------------------

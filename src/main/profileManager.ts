@@ -32,7 +32,7 @@ import {
 import { ConfigService, normalizeUrlInput } from './config';
 import { Logger } from './logger';
 import { parseProxy, ProxyInfo } from './proxy';
-import { applyClientHints, applyFingerprint, FingerprintSpec } from './fingerprint';
+import { applyClientHints, applyFingerprint, FingerprintSpec, removeFingerprintPreload } from './fingerprint';
 import { Cell, computeCells, logPanelReserve, PARKED } from './layout';
 
 /** Внутреннее описание активного представления. */
@@ -46,6 +46,13 @@ interface ManagedView {
   fp: FingerprintSpec;
   /** Зарегистрирован ли CDP-патч на этом webContents (сбрасывается при detach). */
   scriptAdded: boolean;
+  /**
+   * Представление в процессе teardown (удаление профиля / закрытие окна).
+   * Все отложенные и асинхронные обработчики (did-navigate, devtools-closed,
+   * in-flight CDP-команды) обязаны молчать: обращение к webContents ПОСЛЕ
+   * close() роняет процесс нативно (crashpad, Windows/Electron 33).
+   */
+  closing: boolean;
 }
 
 type EmitFn = (channel: 'profiles-updated' | 'layout-changed', payload: unknown) => void;
@@ -143,6 +150,8 @@ export class ProfileManager {
       const reserved = logPanelReserve(content.width, this.logPanelOpen);
       const cells = computeCells(this.config.config.layout, content, reserved);
       const profiles = this.config.config.profiles;
+      // Пустой список профилей — безопасный no-op: деление только на константы
+      // раскладки (cols/rows >= 1), цикл просто не выполняется.
 
       for (let i = 0; i < profiles.length; i++) {
         const profile = profiles[i];
@@ -202,16 +211,21 @@ export class ProfileManager {
   }
 
   async removeProfile(id: string): Promise<CommandResult> {
+    const victim = this.config.config.profiles.find((p) => p.id === id) ?? null;
     const before = this.config.config.profiles.length;
     this.config.config.profiles = this.config.config.profiles.filter((p) => p.id !== id);
     if (this.config.config.profiles.length === before) {
       return { ok: false, error: 'Профиль не найден' };
     }
     this.config.save();
+    // Preload-файл отпечатка (userData/fingerprint-preloads/<id>.js) больше
+    // не нужен — удаляем, иначе в userData копится мёртвый мусор.
+    if (victim) removeFingerprintPreload(victim, this.log);
     this.destroyView(id);
     this.log.info(`профиль удалён: ${id}`);
     this.notify();
-    // Сдвинуть оставшиеся представления на освободившиеся ячейки.
+    // Сдвинуть оставшиеся представления на освободившиеся ячейки
+    // (при пустом списке профилей recomputeLayout — безопасный no-op).
     this.recomputeLayout();
     return { ok: true };
   }
@@ -239,8 +253,11 @@ export class ProfileManager {
 
   reloadAll(): void {
     for (const mv of this.views.values()) {
+      if (mv.closing) continue;
       try {
-        mv.view.webContents.reload();
+        const wc = mv.view.webContents;
+        if (wc.isDestroyed()) continue;
+        wc.reload();
       } catch (err) {
         this.log.error(`[${mv.profile.id}] reload failed: ${String(err)}`);
       }
@@ -254,8 +271,14 @@ export class ProfileManager {
       this.log.warn(`reload: представление не найдено (${id})`);
       return;
     }
+    if (mv.closing) return;
     try {
-      mv.view.webContents.reload();
+      const wc = mv.view.webContents;
+      if (wc.isDestroyed()) {
+        this.log.warn(`reload: webContents уже закрыт (${id})`);
+        return;
+      }
+      wc.reload();
     } catch (err) {
       this.log.error(`[${id}] reload failed: ${String(err)}`);
     }
@@ -269,6 +292,10 @@ export class ProfileManager {
       return;
     }
     const wc = mv.view.webContents;
+    if (wc.isDestroyed()) {
+      this.log.warn(`devtools: webContents уже закрыт (${id})`);
+      return;
+    }
 
     // P2.1: CDP-отладчик (эмуляция) конфликтует с DevTools —
     // «Debugger is already attached». Отключаем наш отладчик перед открытием;
@@ -286,7 +313,11 @@ export class ProfileManager {
 
     // После закрытия DevTools восстанавливаем эмуляцию:
     // UA/platform, таймзону и патч отпечатка (Page.addScript...).
+    // ВАЖНО: devtools-closed стреляет и при закрытии самого профиля
+    // (destroyView -> close() гасит и окно DevTools) — в этом случае wc
+    // уже мёртв, восстанавливать нечего и трогать его нельзя (crashpad).
     wc.once('devtools-closed', () => {
+      if (mv.closing || wc.isDestroyed()) return;
       this.log.info(`[${id}] DevTools закрыт — восстанавливаю CDP-эмуляцию`);
       void this.applyProfileEmulation(mv);
     });
@@ -382,9 +413,11 @@ export class ProfileManager {
       // Строка для проверки консистентности через https://browserleaks.com/canvas (P2.4).
       this.log.info(`${tag} ${fp.description}`);
 
-      // Профиль могли удалить, пока готовилась сессия.
+      // Профиль могли удалить, пока готовилась сессия. Файл-инъекция мог
+      // быть записан шагом выше — подчищаем за собой (мусор в userData).
       if (!this.isActive(profile.id)) {
         this.log.info(`${tag} профиль больше не активен — представление не создаётся`);
+        removeFingerprintPreload(profile);
         return;
       }
       if (!this.win || this.win.isDestroyed()) return;
@@ -398,7 +431,16 @@ export class ProfileManager {
       });
       this.win.contentView.addChildView(view);
 
-      const mv: ManagedView = { profile, view, session: ses, proxy, extensions, fp, scriptAdded: false };
+      const mv: ManagedView = {
+        profile,
+        view,
+        session: ses,
+        proxy,
+        extensions,
+        fp,
+        scriptAdded: false,
+        closing: false,
+      };
       this.views.set(profile.id, mv);
       this.byWcId.set(view.webContents.id, profile.id);
 
@@ -411,6 +453,8 @@ export class ProfileManager {
       });
       // После каждой навигации повторно применяем часовой пояс
       // (CDP-override привязан к процессу рендера и может слетать при смене процесса).
+      // Событие может прилететь и во время teardown — applyTimezone проверяет
+      // closing/isDestroyed и молча выходит.
       wc.on('did-navigate', () => {
         void this.applyTimezone(mv);
       });
@@ -418,6 +462,13 @@ export class ProfileManager {
       // 6) Эмуляция через CDP: UA/platform, таймзона и патч отпечатка
       //    (Page.addScriptToEvaluateOnNewDocument — до скриптов страницы).
       await this.applyProfileEmulation(mv);
+
+      // Профиль могли удалить, пока готовилась CDP-эмуляция: webContents уже
+      // закрыт в destroyView — loadURL/позиционирование запрещены (crashpad).
+      if (mv.closing || wc.isDestroyed()) {
+        this.log.info(`${tag} профиль удалён во время создания — представление не активируется`);
+        return;
+      }
 
       // 7) Загружаем URL (или about:blank, если не задан).
       const target = profile.url && profile.url.trim() ? profile.url.trim() : 'about:blank';
@@ -451,8 +502,9 @@ export class ProfileManager {
     } catch {
       cell = fallback;
     }
+    if (mv.closing) return;
     try {
-      mv.view.setBounds(cell);
+      if (!mv.view.webContents.isDestroyed()) mv.view.setBounds(cell);
     } catch {
       /* view мог закрыться параллельно */
     }
@@ -467,29 +519,41 @@ export class ProfileManager {
    */
   private async applyProfileEmulation(mv: ManagedView): Promise<void> {
     const { profile } = mv;
+    if (mv.closing) return;
     const wc = mv.view.webContents;
+    if (wc.isDestroyed()) return;
+
+    // Ссылки на webContents/debugger берём, ПОКА таргет жив: после await'ов
+    // wc может быть закрыт (удаление профиля), и доступ к свойствам мёртвого
+    // объекта недопустим. Все шаги — под guard alive().
+    const dbg = wc.debugger;
+    const alive = (): boolean => !mv.closing && !wc.isDestroyed();
+
     const wantUa = !!profile.platform || !!profile.userAgent;
     try {
-      if (!wc.debugger.isAttached()) wc.debugger.attach('1.3');
-      if (wantUa) {
+      if (!dbg.isAttached()) dbg.attach('1.3');
+      if (wantUa && alive()) {
         const params: Record<string, unknown> = {
           userAgent: profile.userAgent || mv.session.getUserAgent(),
         };
         if (profile.platform) params.platform = profile.platform;
-        await wc.debugger.sendCommand('Network.setUserAgentOverride', params);
+        await dbg.sendCommand('Network.setUserAgentOverride', params);
       }
-      if (profile.timezone) {
-        await wc.debugger.sendCommand('Emulation.setTimezoneOverride', {
+      if (profile.timezone && alive()) {
+        await dbg.sendCommand('Emulation.setTimezoneOverride', {
           timezoneId: profile.timezone,
         });
       }
-      if (!mv.scriptAdded) {
-        await wc.debugger.sendCommand('Page.addScriptToEvaluateOnNewDocument', {
+      if (alive() && !mv.scriptAdded) {
+        await dbg.sendCommand('Page.addScriptToEvaluateOnNewDocument', {
           source: mv.fp.source,
         });
         mv.scriptAdded = true;
       }
     } catch (err) {
+      // «target closed while handling command» — норма при удалении профиля
+      // в момент применения эмуляции: preload-патч уже в файле сессии,
+      // приложение не должно падать.
       this.log.warn(
         `[${profile.id}] CDP-эмуляция не удалась (продолжаем, preload-патч подстрахует): ${String(err)}`,
       );
@@ -498,12 +562,14 @@ export class ProfileManager {
 
   /** Повторная установка часового пояса (после навигации). */
   private async applyTimezone(mv: ManagedView): Promise<void> {
-    if (!mv.profile.timezone) return;
+    if (!mv.profile.timezone || mv.closing) return;
     try {
       const wc = mv.view.webContents;
       if (wc.isDestroyed()) return;
-      if (!wc.debugger.isAttached()) wc.debugger.attach('1.3');
-      await wc.debugger.sendCommand('Emulation.setTimezoneOverride', {
+      const dbg = wc.debugger; // ссылка — пока таргет жив
+      if (!dbg.isAttached()) dbg.attach('1.3');
+      if (mv.closing || wc.isDestroyed()) return;
+      await dbg.sendCommand('Emulation.setTimezoneOverride', {
         timezoneId: mv.profile.timezone,
       });
     } catch (err) {
@@ -550,21 +616,51 @@ export class ProfileManager {
   private destroyView(id: string): void {
     const mv = this.views.get(id);
     if (!mv) return;
+
+    // Флаг «teardown пошёл»: все отложенные обработчики и in-flight CDP-команды
+    // этого представления обязаны молчать (см. closing в ManagedView).
+    mv.closing = true;
+
+    // webContents берём ДО любых действий и один раз: после close() доступ
+    // к view.webContents запрещён (Windows/Electron 33: crashpad).
+    let wc: Electron.WebContents | null = null;
     try {
-      this.byWcId.delete(mv.view.webContents.id);
+      wc = mv.view.webContents;
     } catch {
       /* webContents мог уже закрыться */
     }
+
+    try {
+      if (wc) this.byWcId.delete(wc.id);
+    } catch {
+      /* ignore */
+    }
+
+    // Порядок ОБЯЗАТЕЛЕН (регрессия P1.3, crashpad на Win/Electron 33):
+    //   1) открепить view от родителя — close() на ещё прицепленном к
+    //      contentView view роняет процесс нативно;
     try {
       this.win?.contentView.removeChildView(mv.view);
     } catch {
       /* окно могло уже закрыться */
     }
+
+    //   2) снять CDP-отладчик ДО close — закрытие таргета с прицепленным
+    //      debugger'ом (или с командой в полёте) тоже роняет процесс;
     try {
-      mv.view.webContents.close();
+      if (wc && !wc.isDestroyed() && wc.debugger.isAttached()) wc.debugger.detach();
+    } catch {
+      /* ignore */
+    }
+
+    //   3) закрыть webContents.
+    try {
+      if (wc && !wc.isDestroyed()) wc.close();
     } catch (err) {
       this.log.warn(`[${id}] ошибка закрытия webContents: ${String(err)}`);
     }
+
+    // Дальше view.webContents НЕ существует — ни одного обращения.
     this.views.delete(id);
     this.log.info(`представление закрыто: ${id}`);
   }
