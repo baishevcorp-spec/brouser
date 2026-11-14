@@ -1,0 +1,189 @@
+/**
+ * ConfigService — чтение/запись config.json (папка userData) и валидация.
+ *
+ * Пользователь может править файл руками, поэтому всё нормализуем при загрузке:
+ * неизвестная раскладка -> 2x2, битые профили отбрасываются, id дедуплицируются.
+ * Запись атомарная (tmp + rename), чтобы не побить файл при падении.
+ */
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { app } from 'electron';
+import { AppConfig, LayoutId, LAYOUTS, ProfileConfig, ThemeId, THEMES } from './types';
+import { Logger } from './logger';
+
+const DEFAULT_URL = 'https://www.avito.ru';
+
+export class ConfigService {
+  readonly configDir: string;
+  readonly configPath: string;
+  config: AppConfig;
+
+  constructor(private log: Logger) {
+    this.configDir = app.getPath('userData');
+    this.configPath = path.join(this.configDir, 'config.json');
+  }
+
+  load(): AppConfig {
+    if (fs.existsSync(this.configPath)) {
+      try {
+        const raw = JSON.parse(fs.readFileSync(this.configPath, 'utf8')) as unknown;
+        this.config = normalizeConfig(raw);
+        this.log.info(
+          `config.json загружен: ${this.config.profiles.length} профилей, раскладка ${this.config.layout}`,
+        );
+      } catch (err) {
+        this.log.error(`config.json повреждён (${String(err)}) — использую значения по умолчанию`);
+        this.config = defaultConfig();
+      }
+    } else {
+      this.config = defaultConfig();
+      this.log.info('config.json не найден — создаю файл по умолчанию (2 профиля Avito)');
+      this.save();
+    }
+    return this.config;
+  }
+
+  /** Атомарная запись config.json. */
+  save(): void {
+    try {
+      fs.mkdirSync(this.configDir, { recursive: true });
+      const tmp = this.configPath + '.tmp';
+      fs.writeFileSync(tmp, JSON.stringify(this.config, null, 2), 'utf8');
+      fs.renameSync(tmp, this.configPath);
+    } catch (err) {
+      this.log.error(`не удалось сохранить config.json: ${String(err)}`);
+    }
+  }
+
+  /**
+   * Пути расширений: абсолютные — как есть; относительные ищем по порядку:
+   *   1) папка userData (config.json рядом);
+   *   2) resources/extensions — в упакованном приложении (extraResources);
+   *   3) рабочая директория;
+   *   4) корень приложения (в dev — папка проекта).
+   * Возвращаем null, если путь не существует — вызывающий код залогирует ошибку.
+   */
+  resolveExtensionPath(relOrAbs: string): string | null {
+    const p = (relOrAbs || '').trim();
+    if (!p) return null;
+    if (path.isAbsolute(p)) return fs.existsSync(p) ? p : null;
+    const candidates = [
+      path.join(this.configDir, p),
+      ...(app.isPackaged ? [path.join(process.resourcesPath, 'extensions', p)] : []),
+      path.join(process.cwd(), p),
+      path.join(app.getAppPath(), p),
+    ];
+    for (const c of candidates) {
+      if (fs.existsSync(c)) return c;
+    }
+    return null;
+  }
+
+  /**
+   * Уникальный id вида avito1, avito2... либо слаг из имени
+   * (только латиница/цифры/дефис: id попадает в имя partition).
+   */
+  generateProfileId(name: string): string {
+    const slug = (name || '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '');
+    const base = slug && /^[a-z0-9-]+$/.test(slug) ? slug : 'avito';
+    const taken = new Set(this.config.profiles.map((p) => p.id));
+    if (!taken.has(base)) return base;
+    for (let i = 1; i < 500; i++) {
+      const id = `${base}${i}`;
+      if (!taken.has(id)) return id;
+    }
+    return `${base}-${Date.now()}`;
+  }
+}
+
+// ---------- Нормализация / дефолты ----------
+
+function defaultConfig(): AppConfig {
+  return {
+    profiles: [
+      {
+        id: 'avito1',
+        name: 'Avito Account 1',
+        url: DEFAULT_URL,
+        proxy: '',
+        extensions: [],
+        userAgent: '',
+        timezone: 'Europe/Moscow',
+        platform: '',
+      },
+      {
+        id: 'avito2',
+        name: 'Avito Account 2',
+        url: DEFAULT_URL,
+        proxy: '',
+        extensions: [],
+        userAgent: '',
+        timezone: 'Europe/Moscow',
+        platform: '',
+      },
+    ],
+    layout: '2x2',
+    windowBounds: { width: 1600, height: 900 },
+    theme: 'dark',
+  };
+}
+
+function normalizeConfig(raw: unknown): AppConfig {
+  const src = (raw ?? {}) as Partial<AppConfig>;
+  const layout: LayoutId = LAYOUTS[src.layout as LayoutId] ? (src.layout as LayoutId) : '2x2';
+  const theme: ThemeId = THEMES.includes(src.theme as ThemeId) ? (src.theme as ThemeId) : 'dark';
+  const boundsRaw = src.windowBounds ?? { width: 1600, height: 900 };
+  const width = clampInt(boundsRaw.width, 720, 7680, 1600);
+  const height = clampInt(boundsRaw.height, 480, 4320, 900);
+  const profiles = Array.isArray(src.profiles)
+    ? src.profiles.map(normalizeProfile).filter((p): p is ProfileConfig => p !== null)
+    : [];
+  // Гарантируем уникальность id (иначе partition двух профилей смешается).
+  const seen = new Set<string>();
+  const unique = profiles.filter((p) => {
+    if (seen.has(p.id)) return false;
+    seen.add(p.id);
+    return true;
+  });
+  return { profiles: unique, layout, theme, windowBounds: { width, height } };
+}
+
+function normalizeProfile(raw: unknown): ProfileConfig | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const p = raw as Record<string, unknown>;
+  const id = typeof p.id === 'string' && p.id.trim() ? p.id.trim() : '';
+  if (!id) return null; // профиль без id бесполезен
+  return {
+    id,
+    name: typeof p.name === 'string' && p.name.trim() ? p.name.trim() : id,
+    url: normalizeUrl(typeof p.url === 'string' ? p.url : ''),
+    proxy: typeof p.proxy === 'string' ? p.proxy.trim() : '',
+    extensions: Array.isArray(p.extensions)
+      ? p.extensions.filter((e): e is string => typeof e === 'string' && e.trim() !== '').map((e) => e.trim())
+      : [],
+    userAgent: typeof p.userAgent === 'string' ? p.userAgent.trim() : '',
+    timezone: typeof p.timezone === 'string' ? p.timezone.trim() : '',
+    platform: typeof p.platform === 'string' ? p.platform.trim() : '',
+    hardwareConcurrency:
+      typeof p.hardwareConcurrency === 'number' && p.hardwareConcurrency >= 1 && p.hardwareConcurrency <= 128
+        ? Math.floor(p.hardwareConcurrency)
+        : undefined,
+  };
+}
+
+/** URL профиля: пусто -> Avito, без схемы -> добавляем https://. */
+export function normalizeUrlInput(url: string): string {
+  const trimmed = (url || '').trim();
+  if (!trimmed) return DEFAULT_URL;
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  return `https://${trimmed}`;
+}
+
+function clampInt(v: unknown, min: number, max: number, fallback: number): number {
+  const n = typeof v === 'number' && Number.isFinite(v) ? Math.round(v) : NaN;
+  if (Number.isNaN(n)) return fallback;
+  return Math.min(max, Math.max(min, n));
+}
