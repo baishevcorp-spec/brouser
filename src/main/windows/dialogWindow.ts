@@ -4,17 +4,23 @@
  *
  * Все модалки (импорт cookies / добавление профиля / подтверждение удаления)
  * открываются отдельным BrowserWindow с parent = главное окно:
- *  - на Windows/Linux — modal: true (главное окно блокируется до закрытия);
+ *  - modal НЕ используется: главное окно остаётся полностью рабочим — можно
+ *    переключать раскладку, работать с ячейками Avito и открыть другой
+ *    диалог, не закрывая этот (parent без modal всё равно держит дочернее
+ *    окно выше родителя и сворачивает его вместе с родителем);
  *  - frame: true — системный заголовок: перетаскивание мышью «из коробки»;
  *  - show: false + ready-to-show — без мигания белого фона;
  *  - sandbox: true + contextIsolation: true — отдельный процесс, у preload
- *    только ipcRenderer (каждому диалогу — свой preload с минимальным API).
+ *    только ipcRenderer (каждому диалогу — свой preload с минимальным API);
+ *  - HTML и preload берутся из src/main/paths.ts — единая точка путей к
+ *    dist (глубина этого модуля — dist/main/windows — не важна).
  *
  * Дочернее окно с parent всегда выше родителя и views в нём — по построению
  * Electron; сетка профилей его больше не перекрывает.
  */
 import { BrowserWindow } from 'electron';
 import * as path from 'node:path';
+import { preloadPath, RENDERER_DIR } from '../paths';
 import type { Logger } from '../logger';
 import type { ThemeId } from '../types';
 
@@ -73,7 +79,11 @@ export function openDialog(
   const theme = spec.query.theme as ThemeId | undefined;
   const win = new BrowserWindow({
     parent,
-    modal: process.platform !== 'darwin', // macOS: sheet-поведение, модальность не нужна
+    // modal: false (не указываем) — главное окно не блокируется: с открытым
+    // диалогом можно переключать раскладку и работать с ячейками сетки.
+    // Побочный эффект допускается и обрабатывается: профиль могли удалить
+    // при открытом окне импорта cookies — main закрывает его с сообщением
+    // (см. cookies:import в src/main/index.ts).
     width: spec.width,
     height: spec.height,
     minWidth: spec.minWidth,
@@ -88,12 +98,12 @@ export function openDialog(
     webPreferences: {
       contextIsolation: true,
       sandbox: true,
-      preload: path.join(__dirname, '..', spec.preload),
+      preload: preloadPath(spec.preload),
     },
   });
 
   win.once('ready-to-show', () => win.show());
-  void win.loadFile(path.join(__dirname, '..', 'renderer', spec.html), {
+  void win.loadFile(path.join(RENDERER_DIR, spec.html), {
     query: spec.query,
   });
 

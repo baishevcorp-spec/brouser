@@ -23,6 +23,7 @@
  */
 import { BrowserWindow, ipcMain, screen } from 'electron';
 import * as path from 'node:path';
+import { preloadPath, RENDERER_DIR } from '../paths';
 import type { TooltipRenderData, TooltipShowPayload } from '../types';
 
 /** Отступ тултипа от якоря (DIP). */
@@ -146,7 +147,7 @@ export class TooltipWindowManager {
         contextIsolation: true,
         sandbox: true,
         backgroundThrottling: false,
-        preload: path.join(__dirname, '..', 'preload-tooltip.js'),
+        preload: preloadPath('preload-tooltip.js'),
       },
     });
     // Тултип неинтерактивен: мышь проходит сквозь (forward — чтобы элементы
@@ -162,7 +163,7 @@ export class TooltipWindowManager {
         this.win.webContents.send('tooltip:render', data);
       }
     });
-    void w.loadFile(path.join(__dirname, '..', 'renderer', 'tooltip.html'));
+    void w.loadFile(path.join(RENDERER_DIR, 'tooltip.html'));
 
     this.win = w;
     return w;

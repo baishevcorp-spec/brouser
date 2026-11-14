@@ -10,8 +10,9 @@
 <body class="dialog">
   <!--
     Диалог «Импорт cookies» — отдельное BrowserWindow (родитель — главное
-    окно; на Windows/Linux модальное): HTML-модалка renderer'а перекрывалась
-    нативным слоем WebContentsView, таскать её было невозможно.
+    окно; НЕ модальное: главное окно остаётся рабочим): HTML-модалка
+    renderer'а перекрывалась нативным слоем WebContentsView, таскать её
+    было невозможно.
     Данные профиля приходят через query (?id&name&host&visible&theme),
     команды — через preload-cookie.js (минимальный API поверх существующих
     IPC-каналов).

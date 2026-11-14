@@ -12,6 +12,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { ConfigService } from './config';
 import { Logger } from './logger';
+import { preloadPath, RENDERER_DIR } from './paths';
 import { ProfileManager } from './profileManager';
 import { openDialog } from './windows/dialogWindow';
 import { TooltipWindowManager } from './windows/tooltipWindow';
@@ -96,7 +97,7 @@ function bootstrap(): void {
       backgroundColor: '#0b1518', // тёмная база под темы (renderer рисует свой фон)
       title: 'Brouser',
       webPreferences: {
-        preload: path.join(__dirname, '..', 'preload.js'),
+        preload: preloadPath('preload.js'),
         contextIsolation: true,
         // sandbox: false — preload-у нужен require('./main/layout') для констант
         // геометрии (единый источник с main). Изоляция страницы не страдает:
@@ -107,7 +108,7 @@ function bootstrap(): void {
       },
     });
     win.once('ready-to-show', () => win?.show());
-    void win.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
+    void win.loadFile(path.join(RENDERER_DIR, 'index.html'));
 
     manager!.attachWindow(win);
     // Тултипы поверх WebContentsView: прозрачное always-on-top окно с темой
@@ -182,10 +183,38 @@ function bootstrap(): void {
     );
 
     // Импорт cookies (P3): текст cookies.txt/JSON -> сессия профиля.
+    // Диалог импорта не модален: пока он открыт, профиль можно удалить из
+    // главного окна. Если к моменту «Импортировать» профиля уже нет — не
+    // оставляем окно висеть с «Профиль не найден»: сообщение и закрытие.
     ipcMain.handle(
       'cookies:import',
-      (_e, profileId: string, input: CookieImportInput): Promise<CookieImportResult> =>
-        manager!.importCookies(profileId, input),
+      async (e, profileId: string, input: CookieImportInput): Promise<CookieImportResult> => {
+        const exists = manager!.getState().profiles.some((p) => p.id === profileId);
+        if (!exists) {
+          const dlg = BrowserWindow.fromWebContents(e.sender);
+          if (dlg && !dlg.isDestroyed()) {
+            await dialog.showMessageBox(dlg, {
+              type: 'warning',
+              title: 'Brouser',
+              message: 'Профиль был удалён',
+              detail: 'Окно импорта cookies закроется.',
+              buttons: ['OK'],
+              defaultId: 0,
+            });
+            dlg.close();
+          }
+          return {
+            ok: false,
+            total: 0,
+            imported: 0,
+            skippedDomain: 0,
+            expired: 0,
+            failed: 0,
+            error: 'Профиль был удалён',
+          };
+        }
+        return manager!.importCookies(profileId, input);
+      },
     );
     // Диалог выбора файла cookies (cookies.txt / .json, ≤ 10 МБ) и его чтение.
     // Возврат — в renderer: текст попадает в textarea модалки (можно отредактировать).
