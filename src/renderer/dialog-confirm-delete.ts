@@ -12,17 +12,17 @@ const profileId = q.get('id') ?? '';
 const profileName = q.get('name') ?? '';
 const theme = (q.get('theme') ?? 'dark') as 'dark' | 'teal' | 'light';
 
-const titleEl = document.getElementById('cfm-title') as HTMLElement;
 const textEl = document.getElementById('cfm-text') as HTMLElement;
 const statusEl = document.getElementById('cfm-status') as HTMLElement;
 const deleteBtn = document.getElementById('cfm-delete') as HTMLButtonElement;
 
 document.addEventListener('DOMContentLoaded', () => {
   document.documentElement.dataset.theme = theme;
+  // Заголовок с именем — в нативном тайтл-баре окна; внутри карточки —
+  // только пояснение и кнопки.
   document.title = `Удалить профиль — ${profileName}`;
-  titleEl.textContent = `Удалить профиль «${profileName}»?`;
   textEl.textContent =
-    'Сессия, cookies и настройки профиля будут удалены безвозвратно. Файлы расширений на диске не трогаются.';
+    `Сессия, cookies и настройки профиля «${profileName}» будут удалены безвозвратно. Файлы расширений на диске не трогаются.`;
   mountIcons();
   deleteBtn.focus();
 

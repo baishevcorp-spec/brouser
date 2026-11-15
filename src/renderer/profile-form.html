@@ -10,15 +10,10 @@
 <body class="dialog">
   <!--
     Диалог «Добавить профиль» — отдельное BrowserWindow (родитель — главное
-    окно; на Windows/Linux модальное): прежняя HTML-модалка renderer'а
-    перекрывалась нативным слоем WebContentsView.
+    окно; НЕ модальное). Заголовок и закрытие — в нативном тайтл-баре;
+    прежняя HTML-модалка renderer'а перекрывалась слоем WebContentsView.
   -->
   <form id="profile-form" class="glass card" novalidate>
-    <div class="modal-head">
-      <span class="modal-title">Новый профиль</span>
-      <button type="button" id="pf-close" class="ibtn sm" data-icon="x" data-tip="Закрыть окно" aria-label="Закрыть"></button>
-    </div>
-
     <label class="field">
       <span class="field-label">Имя профиля *</span>
       <input id="f-name" type="text" placeholder="avito3" autocomplete="off" required>

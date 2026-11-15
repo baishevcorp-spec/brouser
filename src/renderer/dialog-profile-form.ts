@@ -26,7 +26,8 @@ document.addEventListener('DOMContentLoaded', () => {
   mountIcons();
   fName.focus();
 
-  document.getElementById('pf-close')?.addEventListener('click', () => api.closeWindow());
+  // Шапка-дубль с ✕ удалена: закрытие — нативным крестиком тайтл-бара,
+  // Esc или «Отмена» внизу.
   document.getElementById('pf-cancel')?.addEventListener('click', () => api.closeWindow());
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') api.closeWindow();

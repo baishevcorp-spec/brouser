@@ -102,6 +102,11 @@ export function openDialog(
     },
   });
 
+  // Диалогам не нужна нативная строка меню File/Edit/View/... — Electron
+  // подставляет дефолтное меню приложения в каждое frame-окно (главное окно
+  // frameless и меню не рисует). На macOS меню окна не показывается.
+  if (process.platform !== 'darwin') win.removeMenu();
+
   win.once('ready-to-show', () => win.show());
   void win.loadFile(path.join(RENDERER_DIR, spec.html), {
     query: spec.query,

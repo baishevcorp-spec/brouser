@@ -12,17 +12,13 @@
     Диалог «Импорт cookies» — отдельное BrowserWindow (родитель — главное
     окно; НЕ модальное: главное окно остаётся рабочим): HTML-модалка
     renderer'а перекрывалась нативным слоем WebContentsView, таскать её
-    было невозможно.
+    было невозможно. Заголовок и кнопка закрытия — в нативном тайтл-баре
+    окна (внутри карточки шапка-дубль не нужна).
     Данные профиля приходят через query (?id&name&host&visible&theme),
     команды — через preload-cookie.js (минимальный API поверх существующих
     IPC-каналов).
   -->
   <form id="cookies-modal" class="glass card" novalidate>
-    <div class="modal-head">
-      <span class="modal-title" id="cf-title">Импорт cookies</span>
-      <button type="button" id="cf-close" class="ibtn sm" data-icon="x" data-tip="Закрыть окно" aria-label="Закрыть"></button>
-    </div>
-
     <div class="file-row">
       <button type="button" id="cf-browse" class="ibtn sm accent" data-icon="file" data-tip="Открыть системный диалог выбора файла cookies.txt / .json (до 10 МБ)" aria-label="Выбрать файл"></button>
       <span id="cf-file-name" class="hint">файл не выбран — вставьте cookies текстом ниже</span>

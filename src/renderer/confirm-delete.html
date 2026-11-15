@@ -9,15 +9,12 @@
 </head>
 <body class="dialog">
   <!--
-    Подтверждение удаления профиля — отдельное BrowserWindow: прежде кнопка
-    «вооружалась» вторым нажатием (HTML-подтверждение перекрывалось views и
-    требовало таймаут). Теперь — явный диалог с кнопками Да/Нет.
+    Подтверждение удаления профиля — отдельное BrowserWindow (родитель —
+    главное окно; НЕ модальное). Заголовок и закрытие — в нативном тайтл-баре;
+    внутри — только пояснение и кнопки Да/Нет: прежняя HTML-кнопка «вооружалась»
+    вторым нажатием (подтверждение перекрывалось views).
   -->
   <div class="glass card confirm-card">
-    <div class="confirm-head">
-      <span class="confirm-icon" data-icon="alert"></span>
-      <span class="modal-title" id="cfm-title">Удалить профиль?</span>
-    </div>
     <p class="confirm-text" id="cfm-text">Профиль будет удалён вместе с сессией и cookies. Это действие необратимо.</p>
     <div id="cfm-status" class="hint" hidden></div>
     <div class="modal-actions">

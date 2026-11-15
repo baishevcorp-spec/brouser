@@ -20,7 +20,6 @@ const profileVisible = q.get('visible') === '1';
 const theme = (q.get('theme') ?? 'dark') as 'dark' | 'teal' | 'light';
 
 // ---------- DOM ----------
-const titleEl = document.getElementById('cf-title') as HTMLElement;
 const formEl = document.getElementById('cookies-modal') as HTMLFormElement;
 const textEl = document.getElementById('cf-text') as HTMLTextAreaElement;
 const domainEl = document.getElementById('cf-domain') as HTMLInputElement;
@@ -35,8 +34,8 @@ let importing = false;
 
 document.addEventListener('DOMContentLoaded', () => {
   document.documentElement.dataset.theme = theme;
+  // Заголовок живёт в нативном тайтл-баре окна (шапки-дубля в карточке нет).
   document.title = `Импорт cookies — ${profileName}`;
-  titleEl.textContent = `Импорт cookies — ${profileName}`;
   mountIcons();
   // Фильтр по умолчанию — хост профиля: из общего экспорта браузера
   // берём только куки «своего» сайта (avito.ru), остальное не тащим.
@@ -46,7 +45,8 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 function bind(): void {
-  document.getElementById('cf-close')?.addEventListener('click', closeDialog);
+  // Шапка-дубль с ✕ удалена: закрытие — нативным крестиком тайтл-бара,
+  // Esc или «Отмена» внизу.
   document.getElementById('cf-cancel')?.addEventListener('click', closeDialog);
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') closeDialog();
