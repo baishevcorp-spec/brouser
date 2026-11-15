@@ -9,7 +9,7 @@
   "private": true,
   "scripts": {
     "build:main": "tsc",
-    "build:renderer": "esbuild src/renderer/renderer.ts src/renderer/dialog-cookie.ts src/renderer/dialog-profile-form.ts src/renderer/dialog-confirm-delete.ts src/renderer/tooltip.ts --bundle --format=iife --target=chrome120 --platform=browser --outdir=dist/renderer",
+    "build:renderer": "esbuild src/renderer/renderer.ts src/renderer/dialog-cookie.ts src/renderer/dialog-profile-form.ts src/renderer/dialog-confirm-delete.ts src/renderer/dialog-settings.ts src/renderer/tooltip.ts --bundle --format=iife --target=chrome120 --platform=browser --outdir=dist/renderer",
     "build:assets": "node scripts/copy-assets.js",
     "build": "npm run build:main && npm run build:renderer && npm run build:assets",
     "dev": "npm run build && electron .",

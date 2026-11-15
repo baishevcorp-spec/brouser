@@ -522,6 +522,83 @@ details.howto .howto-note { color: var(--muted); }
   font-weight: 600;
 }
 
+/* ---------- Окно «Настройки»: управление расширениями профилей ---------- */
+body.dialog .settings-card { display: flex; flex-direction: column; }
+.settings-section { display: flex; flex-direction: column; gap: 12px; min-height: 0; }
+.settings-row { display: flex; align-items: flex-end; gap: 8px; }
+.settings-row .grow { flex: 1; min-width: 0; }
+.settings-subhead {
+  margin-top: 2px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+body.dialog select {
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--stroke-strong);
+  background: var(--glass-2);
+  color: var(--text);
+  font: inherit;
+  outline: none;
+}
+.ext-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 0;
+  max-height: 46vh;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+.ext-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 9px;
+  border: 1px solid var(--stroke);
+  border-radius: var(--radius-sm);
+  background: var(--glass);
+}
+.ext-row .ext-path {
+  flex: 1;
+  min-width: 0;
+  font-family: ui-monospace, 'Cascadia Code', 'SF Mono', Consolas, monospace;
+  font-size: 10.5px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.badge {
+  flex: 0 0 auto;
+  max-width: 45%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+.badge.ok { color: var(--ok); background: color-mix(in srgb, var(--ok) 12%, transparent); }
+.badge.err { color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, transparent); }
+#s-status { word-break: break-word; }
+#s-status.ok { color: var(--ok); }
+#s-status.err { color: var(--danger); }
+.ibtn.wide-text {
+  width: auto;
+  padding: 0 12px;
+  gap: 6px;
+  display: inline-flex;
+  align-items: center;
+  font-size: 12px;
+  font-weight: 600;
+}
+
 /* ---------- Окно rich-тултипов (прозрачное always-on-top) ---------- */
 body.tipwin {
   background: transparent;

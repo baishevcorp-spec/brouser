@@ -33,6 +33,18 @@ document.addEventListener('DOMContentLoaded', () => {
     if (e.key === 'Escape') api.closeWindow();
   });
 
+  // Выбор папки распакованного расширения: путь добавляется строкой в
+  // textarea — можно несколько, вручную поправить/убрать перед сохранением.
+  document.getElementById('f-ext-pick')?.addEventListener('click', () => {
+    void api.pickExtensionDir().then((res) => {
+      if (!res.ok || !res.path) return; // отмена — молча
+      const cur = fExt.value.trim();
+      if (cur.split(/[\n;]+/).some((s) => s.trim() === res.path)) return; // уже есть
+      fExt.value = cur ? `${cur}\n${res.path}` : res.path;
+      fExt.focus();
+    });
+  });
+
   formEl.addEventListener('submit', (e) => {
     e.preventDefault();
     const input: NewProfileInput = {

@@ -167,6 +167,13 @@ function bindToolbar(): void {
     if (logOpen) renderLogs();
   });
 
+  // Настройки: управление расширениями профилей (отдельное окно).
+  document.getElementById('btn-settings')?.addEventListener('click', () => {
+    void api.openSettings().then((res) => {
+      if (!res.ok) toast('err');
+    });
+  });
+
   // Кнопки окна (frameless) + разворот по двойному клику на панели.
   document.getElementById('win-min')?.addEventListener('click', () => void api.minimize());
   document.getElementById('win-max')?.addEventListener('click', () => void api.toggleMaximize());

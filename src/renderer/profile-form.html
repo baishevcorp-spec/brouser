@@ -34,6 +34,11 @@
       <textarea id="f-ext" rows="3" placeholder="Пути расширений, каждый с новой строки"></textarea>
     </label>
 
+    <div class="file-row">
+      <button type="button" id="f-ext-pick" class="ibtn sm accent" data-icon="folder" data-tip="Системный диалог: выберите папку распакованного расширения (с manifest.json) — путь добавится в поле выше" aria-label="Выбрать папку расширения"></button>
+      <span class="hint">папка расширения добавится в поле выше — можно несколько раз</span>
+    </div>
+
     <label class="field">
       <span class="field-label">User-Agent</span>
       <input id="f-ua" type="text" list="ua-list" placeholder="Необязательно — будет свой стабильный отпечаток" autocomplete="off">

@@ -21,6 +21,7 @@ import {
   CommandResult,
   CookieImportInput,
   CookieImportResult,
+  DirPickResult,
   FilePickResult,
   LayoutId,
   NewProfileInput,
@@ -335,6 +336,63 @@ function bootstrap(): void {
       });
       return { ok: true };
     });
+
+    // Окно «Настройки»: управление распакованными расширениями профилей.
+    ipcMain.handle('dialog:open-settings', (): CommandResult => {
+      if (!win || win.isDestroyed()) return { ok: false, error: 'Главное окно закрыто' };
+      openDialog(win, logger!, {
+        html: 'settings.html',
+        preload: 'preload-settings.js',
+        query: { theme: manager!.getState().theme },
+        title: 'Настройки — Brouser',
+        width: 720,
+        height: 540,
+        minWidth: 560,
+        minHeight: 420,
+      });
+      return { ok: true };
+    });
+
+    // Выбор каталога распакованного расширения (отдельно от cookies:pick-file —
+    // тут openDirectory + проверка manifest.json). Родитель — окно-источник
+    // (форма профиля или «Настройки»).
+    ipcMain.handle('ext:pick-dir', async (e): Promise<DirPickResult> => {
+      try {
+        const parent =
+          BrowserWindow.fromWebContents(e.sender) ??
+          (win && !win.isDestroyed() ? win : null);
+        const options: Electron.OpenDialogOptions = {
+          title: 'Распакованное расширение — выберите папку',
+          properties: ['openDirectory'],
+        };
+        const res = parent
+          ? await dialog.showOpenDialog(parent, options)
+          : await dialog.showOpenDialog(options);
+        if (res.canceled || res.filePaths.length === 0) return { ok: false, error: 'Отменено' };
+        const dir = res.filePaths[0] as string;
+        if (!fs.existsSync(path.join(dir, 'manifest.json'))) {
+          return {
+            ok: false,
+            error: 'В выбранной папке нет manifest.json — нужен корень распакованного расширения',
+          };
+        }
+        return { ok: true, path: dir };
+      } catch (err) {
+        return { ok: false, error: String((err as Error).message ?? err) };
+      }
+    });
+
+    // Подключение/отключение расширений профиля (окно «Настройки», форма профиля).
+    ipcMain.handle(
+      'profile:add-extensions',
+      (_e, profileId: string, paths: string[], reload: boolean): Promise<CommandResult> =>
+        manager!.addProfileExtensions(profileId, paths ?? [], reload !== false),
+    );
+    ipcMain.handle(
+      'profile:remove-extension',
+      (_e, profileId: string, source: string, reload: boolean): Promise<CommandResult> =>
+        manager!.removeProfileExtension(profileId, source, reload !== false),
+    );
 
     // Закрыть окно, из которого пришло сообщение (диалоги).
     ipcMain.on('dialog:close', (e) => {

@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="ru" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'">
+  <title>Настройки — Brouser</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="dialog">
+  <!--
+    Окно «Настройки» — отдельное BrowserWindow (родитель — главное окно;
+    НЕ модальное). Заголовок и закрытие — в нативном тайтл-баре.
+    Раздел «Расширения»: управление распакованными расширениями выбранного
+    профиля — добавить через системный выбор папки (проверка manifest.json),
+    убрать, статус загрузки в живую сессию. Изменения применяются к сессии
+    немедленно (без пересоздания ячейки).
+  -->
+  <div class="glass card settings-card">
+    <section class="settings-section">
+      <div class="settings-row">
+        <label class="field grow">
+          <span class="field-label">Профиль</span>
+          <select id="s-profile" aria-label="Профиль"></select>
+        </label>
+        <button type="button" id="s-refresh" class="ibtn sm" data-icon="rotate" data-tip="Перечитать состояние (профили и статусы расширений)" aria-label="Обновить"></button>
+      </div>
+
+      <div class="settings-subhead">Расширения профиля</div>
+      <div id="s-ext-list" class="ext-list" aria-live="polite"></div>
+
+      <div class="file-row">
+        <button type="button" id="s-add" class="ibtn sm accent wide-text" data-icon="folder" data-tip="Системный диалог: выберите папку распакованного расширения (с manifest.json) — подключится к профилю и его сессии" aria-label="Добавить распакованное расширение"></button>
+        <span class="hint">распакованное расширение — папка с manifest.json</span>
+      </div>
+
+      <label class="checkbox-row">
+        <input type="checkbox" id="s-reload" checked>
+        <span>Перезагрузить страницу профиля после изменения (нужно для content-скриптов)</span>
+      </label>
+
+      <div id="s-status" class="hint" hidden></div>
+    </section>
+  </div>
+
+  <script src="dialog-settings.js"></script>
+</body>
+</html>

@@ -58,6 +58,7 @@ const api: BrouserApi = {
   openCookieImport: (profileId) => ipcRenderer.invoke('dialog:open-cookie-import', profileId),
   openProfileForm: () => ipcRenderer.invoke('dialog:open-profile-form'),
   openDeleteConfirm: (profileId) => ipcRenderer.invoke('dialog:open-delete-confirm', profileId),
+  openSettings: () => ipcRenderer.invoke('dialog:open-settings'),
 
   // Rich-тултипы: прозрачное always-on-top окно (HTML-тултипы перекрыты views).
   tooltipShow: (payload) => ipcRenderer.send('tooltip:show', payload),

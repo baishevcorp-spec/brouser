@@ -20,6 +20,7 @@ const rendererFiles = [
   'cookie-import.html',
   'profile-form.html',
   'confirm-delete.html',
+  'settings.html',
   'tooltip.html',
 ];
 for (const file of rendererFiles) {
