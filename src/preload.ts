@@ -17,6 +17,7 @@ import type {
   AssistantErrorEvent,
   AssistantRestartEvent,
   AssistantStatus,
+  AssistantToolEvent,
   BrouserApi,
   CookieImportInput,
   CookieImportResult,
@@ -79,7 +80,7 @@ const api: BrouserApi = {
   // Выделенный профиль — «активный» для ассистента (развилка 4A).
   setSelectedProfile: (id) => ipcRenderer.send('ui:selected-profile', id),
 
-  // AI-ассистент (P4, этап 1): чат стримится событиями assistant:*.
+  // AI-ассистент (P4): чат стримится событиями assistant:* (этап 2 — тулы).
   assistantSend: (text) => ipcRenderer.invoke('assistant:send', text),
   assistantAbort: () => ipcRenderer.invoke('assistant:abort'),
   assistantClear: () => ipcRenderer.invoke('assistant:clear'),
@@ -91,6 +92,7 @@ const api: BrouserApi = {
   onLogMessage: (cb) => subscribe<LogEntry>('log-message', cb),
   onAssistantChunk: (cb) => subscribe<AssistantChunkEvent>('assistant:chunk', cb),
   onAssistantRestart: (cb) => subscribe<AssistantRestartEvent>('assistant:restart', cb),
+  onAssistantTool: (cb) => subscribe<AssistantToolEvent>('assistant:tool', cb),
   onAssistantDone: (cb) => subscribe<AssistantDoneEvent>('assistant:done', cb),
   onAssistantError: (cb) => subscribe<AssistantErrorEvent>('assistant:error', cb),
 };

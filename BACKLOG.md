@@ -190,15 +190,41 @@ API-ключ, cookies, пароли; сообщения пользователя
       без микрофона. Критерий «привет» → ответ LLM проверяется
       пользователем на своей машине (в песочнице нет ни cloud-ключа,
       ни GPU).
-- [ ] Этап 2. Тулы + Zod — `src/main/ai/tools/`; ориентиры покрытия:
-      список профилей и статусов; прокси профиля (только хост, не креды);
-      смена раскладки сетки; перезагрузка профиля / открытие DevTools;
-      хвост логов app.log (20–50 строк); FAQ-поиск (реализация — этап 3).
-      Каждый тул: Zod-схема параметров, возвращает
-      `{ok:true, data}|{ok:false, reason}`, не кидает исключений, лог
-      `[assistant][tool=<name>]` (args + size результата); при вызове тула
-      — индикатор «⏳ …» и компактная карточка результата в чате (не сырой
-      JSON). Критерий: тест-кейсы 1–3 ТЗ.
+- [x] Этап 2. Тулы + Zod — `src/main/ai/tools/` (registry + schemas + resolve
+      + fallbackParse + searchFaq). Реестр 13 тулов по docs/assistant-stage0.md:
+      list_profiles, profile_details (хост прокси без кредов), grid_info,
+      set_layout, reload_profile, reload_all, open_devtools, reorder_profile,
+      toggle_input_sync, rotate_proxy_ip, log_tail (≤ 50 записей из кольцевого
+      буфера, фильтр по уровню), app_info, search_faq. Каждый тул — обёртка
+      над СУЩЕСТВУЮЩИМ методом ProfileManager/Logger (ноль новых привилегий
+      и IPC-каналов); аргументы — Zod-схемы (единственный источник истины:
+      JSON Schema для модели генерируется z.toJSONSchema + санитайзер
+      toJsonSchemaForModel — defaults не попадают в required); ответ модели-
+      facing ≤ 8 КБ (clamp); профиль модель передаёт именем/id/«active» — id
+      подставляет main (resolve: id → уникальное имя → active; промах =
+      «профиль не найден» без деталей). Двухшаговый цикл в assistant.ts:
+      model → tool_calls → исполнение → результаты (role:'tool', tool_name)
+      → model → финальный текст (≤ 4 раунда, последний без тулов — гаранти
+      рует текстовый финал; бюджет 8 исполнений на ход). Карточки тулов
+      в чате (assistant:tool: title + ≤ 6 строк, textContent) — не JSON;
+      после карточки текст продолжает свежий пузырь (объявление → карточка →
+      ответ). Fallback-парсер (ПЕРЕНЕСЁН из этап 4 по обновлённому ТЗ
+      пользователя): tool call сырым JSON в content (в т.ч. ```json-фенсы
+      и arguments-строкой) → исполнение, лог `[assistant] fallback-parser:
+      parsed tool from content, name=…`, пузырь перезапускается чистым
+      текстом. Системный промпт v2 (10 правил): п.4 — меняющие состояние
+      тулы только после объявления словами; п.10 — rotate_proxy_ip всегда
+      предупреждать о возможном разлогине на Avito и ждать явного согласия;
+      список тулов в промпте строится из реестра (один источник истины).
+      search_faq — keyword-поиск по секциям README/BACKLOG/ROADMAP/docs
+      (заголовок ×5, тело ×1, топ-2, цитата ≤ 1,5 КБ) — закрывает тест-кейс 3;
+      RAG-уточнение (topK-3, чанки 800/500, suggestions) — этап 3.
+      Документация кладётся в extraResources (search_faq работает и в релизе).
+      Тесты: tests/smoke-stage2.cjs (fallback/resolve/JSON Schema, 19 проверок)
+      + tests/integration-stage2.cjs (фейковый Ollama-сервер NDJSON + реальные
+      AssistantService/ToolRegistry: двухшаговый цикл, role:'tool' в раунде 2,
+      fallback-путь, set_layout реально меняет раскладку — 20 проверок).
+      Критерий: тест-кейсы 1–8 ТЗ (проверяются пользователем на своей машине).
 - [ ] Этап 3. RAG + FAQ — `src/main/ai/faq.ts`: searchFAQ(query, topK=3)
       по README.md / BACKLOG.md / ROADMAP.md / docs/*.md; разбиение по
       заголовкам `##`, чанк ≤ 800 симв.; keyword-score (lowercase, слова
@@ -208,11 +234,12 @@ API-ключ, cookies, пароли; сообщения пользователя
       кэша — документация меняется на ходу); тул searchFAQ;
       docs/assistant-tools.md — таблица всех тулов (имя, параметры, что
       возвращает, что НЕ делает, пример вызова). Критерий: тест-кейс 4
-      (ответ на основе README со ссылкой на раздел).
-- [ ] Этап 4. Безопасность и отказы — fallback-парсер tool calls: если
-      message.tool_calls пуст, но в content есть JSON с name/arguments —
-      распарсить и выполнить как тул, лог `[assistant] fallback-parser`:
-      parsed tool from content, name=…; обработка ошибок LLM (timeout
+      (ответ на основе README со ссылкой на раздел). База: keyword-поиск
+      searchFaq уже работает с этапа 2 — этап 3 уточняет (topK, чанки,
+      suggestions, docs/assistant-tools.md).
+- [ ] Этап 4. Безопасность и отказы — (fallback-парсер ВЫПОЛНЕН в этапе 2
+      по обновлённому ТЗ пользователя — см. выше) остаются: обработка
+      ошибок LLM (timeout
       30 с, offline) → «Ассистент временно недоступен, проверьте
       соединение»; корректные отказы на запрещённые операции («удаление
       доступно только через интерфейс Brouser») + предупреждение о

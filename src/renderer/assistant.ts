@@ -1,16 +1,18 @@
 /**
- * Renderer: чат AI-ассистента (P4, этап 1).
+ * Renderer: чат AI-ассистента (P4, этапы 1–2).
  *
  * Логика диалога панели #assistant: отправка (Enter), потоковая отрисовка
  * ответа (события assistant:chunk/restart/done/error), «Стоп», «Очистить
  * историю», индикатор «Cloud / Local / Недоступен» (дешёвая проба main).
- * Открытие/закрытие панели и резервация layout — в renderer.ts (панель
- * взаимозаменяема с журналом).
+ * Этап 2: карточки выполненных тулов (assistant:tool) — компактные, не JSON;
+ * после карточки текст ответа продолжает СВЕЖИЙ пузырь (botBubble = null,
+ * чанк-хендлер создаёт новый) — порядок: объявление → карточка → ответ.
+ * Открытие/закрытие панели и резервация layout — в renderer.ts.
  *
- * Текст ответа вставляется ТОЛЬКО через textContent — модель не может
+ * Текст и карточки вставляются ТОЛЬКО через textContent — модель не может
  * внедрить разметку в окно Brouser.
  */
-import type { AssistantStatus } from '../main/types';
+import type { AssistantStatus, AssistantToolEvent } from '../main/types';
 
 const api = window.brouser;
 
@@ -48,7 +50,11 @@ export function initAssistantChat(): void {
   });
 
   api.onAssistantChunk((ev) => {
-    if (!botBubble) return;
+    // После тул-карточки (или fallback-парсера) пузырь начинается заново.
+    if (!botBubble) {
+      botBubble = addMsg('bot', '');
+      botBubble.classList.add('pending');
+    }
     botBubble.classList.remove('pending');
     botBubble.textContent = (botBubble.textContent ?? '') + ev.delta;
     scrollBottom();
@@ -59,6 +65,12 @@ export function initAssistantChat(): void {
     if (!botBubble) return;
     botBubble.textContent = '';
     botBubble.classList.add('pending');
+  });
+  // Карточка выполненного тула (этап 2): между пузырями ответа; следующий
+  // за ней чанк откроет свежий пузырь — визуальный порядок хода ассистента.
+  api.onAssistantTool((ev) => {
+    addToolCard(ev);
+    botBubble = null;
   });
   api.onAssistantDone((ev) => {
     finishStream();
@@ -118,6 +130,24 @@ function addMsg(kind: 'user' | 'bot' | 'sys', text: string): HTMLElement {
   messagesEl.appendChild(el);
   scrollBottom();
   return el;
+}
+
+/** Карточка тул-вызова (этап 2): компактная, только textContent. */
+function addToolCard(ev: AssistantToolEvent): void {
+  const card = document.createElement('div');
+  card.className = `tool-card${ev.ok ? '' : ' err'}`;
+  const head = document.createElement('div');
+  head.className = 'tool-card-head';
+  head.textContent = ev.title;
+  card.appendChild(head);
+  for (const line of ev.lines) {
+    const row = document.createElement('div');
+    row.className = 'tool-card-line';
+    row.textContent = line;
+    card.appendChild(row);
+  }
+  messagesEl.appendChild(card);
+  scrollBottom();
 }
 
 function scrollBottom(): void {

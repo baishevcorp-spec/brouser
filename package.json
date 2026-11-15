@@ -12,6 +12,7 @@
     "build:renderer": "esbuild src/renderer/renderer.ts src/renderer/dialog-cookie.ts src/renderer/dialog-profile-form.ts src/renderer/dialog-confirm-delete.ts src/renderer/dialog-settings.ts src/renderer/tooltip.ts --bundle --format=iife --target=chrome120 --platform=browser --outdir=dist/renderer",
     "build:assets": "node scripts/copy-assets.js",
     "build": "npm run build:main && npm run build:renderer && npm run build:assets",
+    "test": "node tests/smoke-stage2.cjs && node tests/integration-stage2.cjs",
     "dev": "npm run build && electron .",
     "dist:win": "npm run build && electron-builder --win",
     "dist:linux": "npm run build && electron-builder --linux"
@@ -28,6 +29,7 @@
     "esbuild@0.28.2": true
   },
   "dependencies": {
-    "ollama": "^0.6.4"
+    "ollama": "^0.6.4",
+    "zod": "^4.6.7"
   }
 }

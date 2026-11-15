@@ -121,6 +121,8 @@ export interface ProfileState {
   hasProxy: boolean;
   /** Схема прокси для тултипа (без учётных данных). */
   proxyScheme: string | null;
+  /** Хост прокси без кредов и порта — тулу ассистента profile_details (P4/этап 2). */
+  proxyHost: string | null;
   extensions: ExtensionState[];
   timezone: string | null;
   userAgentSet: boolean;
@@ -435,6 +437,22 @@ export interface AssistantRestartEvent {
   provider: 'cloud' | 'local';
 }
 
+/**
+ * Карточка тул-вызова main -> renderer (канал assistant:tool, P4/этап 2).
+ * Компактное представление результата для чата: НЕ JSON, только короткие
+ * строки; рендерится через textContent (Zero-Trust к разметке модели).
+ */
+export interface AssistantToolEvent {
+  /** Имя тула (list_profiles, …) — для журнала/диагностики. */
+  name: string;
+  /** Короткий заголовок карточки («Профили: 2», «Раскладка → 2x2»). */
+  title: string;
+  /** Тело карточки: ≤ 6 коротких строк результата. */
+  lines: string[];
+  /** Тул отработал успешно? */
+  ok: boolean;
+}
+
 /** Ошибка main -> renderer (канал assistant:error). */
 export interface AssistantErrorEvent {
   message: string;
@@ -533,6 +551,8 @@ export interface BrouserApi {
   onLogMessage(cb: (entry: LogEntry) => void): () => void;
   onAssistantChunk(cb: (ev: AssistantChunkEvent) => void): () => void;
   onAssistantRestart(cb: (ev: AssistantRestartEvent) => void): () => void;
+  /** Карточка выполненного тула (P4/этап 2): появляется между пузырями ответа. */
+  onAssistantTool(cb: (ev: AssistantToolEvent) => void): () => void;
   onAssistantDone(cb: (ev: AssistantDoneEvent) => void): () => void;
   onAssistantError(cb: (ev: AssistantErrorEvent) => void): () => void;
 }

@@ -15,12 +15,24 @@ files:
 
 # Папка extensions упаковывается в resources/extensions,
 # чтобы в упакованном приложении работали относительные пути расширений.
+# Документация (README/BACKLOG/ROADMAP/docs) — источник search_faq
+# тул-а ассистента (P4/этап 2): в dev — корень проекта, в релизе — resources.
 extraResources:
   - from: extensions
     to: extensions
     filter:
       - "**/*"
       - "!.gitkeep"
+  - from: README.md
+    to: README.md
+  - from: BACKLOG.md
+    to: BACKLOG.md
+  - from: ROADMAP.md
+    to: ROADMAP.md
+  - from: docs
+    to: docs
+    filter:
+      - "**/*.md"
 
 asar: true
 icon: assets/icon.png

@@ -620,9 +620,29 @@ base64) в `userData/assistant-config.json` — НЕ в config.json и нико�
 DOM только как текст (`textContent`). «Активный профиль» — выделенная ячейка
 (клик по шапке): ассистенту можно спросить «про этот профиль».
 
-Тул-вызовы (список профилей, хвост журнала, смена раскладки и т.д. из
-`docs/assistant-stage0.md`) — этап 2 (`src/main/ai/tools/`, Zod-схемы,
-карточки результатов в чате). Голос — этап 5+ (после текстовых тест-кейсов).
+**Тулы (этап 2).** Ассистент — агент с тулами (двухшаговый цикл: модель
+объявляет действие словами → вызывает тул → получает результат → отвечает
+пользователю). 13 тулов (`src/main/ai/tools/`, обёртки над существующими
+методами ProfileManager/Logger — ноль новых IPC-каналов): list_profiles,
+profile_details (хост прокси, НЕ креды), grid_info, set_layout,
+reload_profile, reload_all, open_devtools, reorder_profile,
+toggle_input_sync, rotate_proxy_ip, log_tail (≤ 50 записей с фильтром),
+app_info, search_faq (README/BACKLOG/ROADMAP/docs — документация кладётся
+в extraResources). Аргументы — Zod-схемы (JSON Schema для модели
+генерируется из них же); ответ тула ≤ 8 КБ. Профиль задаётся именем/id или
+словом `active` (выделенная ячейка) — id подставляет main, промах =
+«профиль не найден» без деталей. Fallback-парсер: если модель положила
+tool call сырым JSON в content (известный баг облачных Ollama) — вызов
+распознаётся и исполняется, в журнале
+`[assistant] fallback-parser: parsed tool from content, name=…`.
+Системный промпт v2: меняющие состояние тулы — только после объявления
+словами; rotate_proxy_ip — всегда предупреждение о возможном разлогине
+на Avito и явное согласие. Результаты тулов — компактные карточки в чате
+(не JSON); история хранит только текстовые ответы.
+
+Тул-вызовы подключены (этап 2, `src/main/ai/tools/`, Zod-схемы, карточки
+результатов в чате); RAG-уточнение поиска по документации — этап 3.
+Голос — этап 5+ (после текстовых тест-кейсов).
 
 ## Архитектура
 
@@ -712,7 +732,7 @@ Renderer -> main (через `ipcRenderer.invoke`, методы `window.brouser`
 | `ext:pick-dir` | `pickExtensionDir()` (диалоговые preload'ы) | системный диалог выбора папки распакованного расширения (проверка manifest.json) |
 | `profile:add-extensions` | `addExtensions(profileId, paths, reload)` (Настройки/форма) | подключить распакованные расширения к живой сессии немедленно |
 | `profile:remove-extension` | `removeExtension(profileId, source, reload)` (Настройки) | выгрузить расширение из конфига и живой сессии |
-| `assistant:send` | `assistantSend(text)` | отправить сообщение ассистенту; ответ приходит событиями `assistant:chunk/restart/done/error` (валидация: ≤ 4000 символов, не занят) |
+| `assistant:send` | `assistantSend(text)` | отправить сообщение ассистенту; ответ приходит событиями `assistant:chunk/tool/restart/done/error` (валидация: ≤ 4000 символов, не занят) |
 | `assistant:abort` | `assistantAbort()` | остановить текущий ответ (частичный текст остаётся в чате) |
 | `assistant:clear` | `assistantClear()` | очистить историю диалога в памяти main |
 | `assistant:probe` | `assistantProbe()` (также «Настройки») | дешёвая проба доступности: «Cloud / Local / Недоступен» |
@@ -739,7 +759,8 @@ Main -> renderer и окна диалогов:
 | `layout-changed` | `LayoutId` | смена раскладки (renderer перестраивает сетку) |
 | `log-message` | `LogEntry` | новая запись журнала (трансляция всех логов) |
 | `assistant:chunk` | `{delta, provider}` | кусок стрима ответа ассистента (renderer дописывает в пузырь) |
-| `assistant:restart` | `{provider}` | ретрай/фолбэк после частичного ответа — пузырь очищается и стримится заново |
+| `assistant:tool` | `{name, title, lines, ok}` | карточка выполненного тула (этап 2): компактная, между пузырями ответа; следующий чанк открывает свежий пузырь |
+| `assistant:restart` | `{provider}` | ретрай/фолбэк/fallback-парсер после частичного ответа — пузырь очищается и стримится заново |
 | `assistant:done` | `{aborted, provider, model}` | ответ завершён (aborted — остановлено пользователем) |
 | `assistant:error` | `{message}` | провал всех провайдеров: «Ассистент временно недоступен…» в панель, без падения |
 | `tooltip:render` | `{gen, title, body, theme}` | данные рендера для окна тултипов; ответ окна — `tooltip:measured` `{gen, w, h}`, main ставит bounds и показывает окно |

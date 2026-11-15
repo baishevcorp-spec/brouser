@@ -1,10 +1,10 @@
 /**
- * AssistantService — каркас AI-ассистента Brouser (P4, этап 1).
+ * AssistantService — AI-ассистент Brouser (P4: этап 1 + этап 2).
  *
  * Zero-Trust к LLM: сервис живёт в main, НО не даёт модели ничего, кроме
- * текста промпта и контекста-снимка (system-prompt.ts): никаких session,
- * webContents, fs, profileManager. Тулы подключаются на этапе 2 отдельным
- * реестром — сюда они не входят сознательно.
+ * текста промпта и контекста-снимка (system-prompt.ts) + тулов реестра
+ * (tools/registry.ts — обёртки над существующими методами ProfileManager/
+ * Logger). Никаких session, webContents, fs, profileManager модели.
  *
  * Провайдеры (пакет `ollama`, /api/chat со стримом NDJSON):
  *   - Ollama Cloud: endpoint и модель из assistant-config.json,
@@ -12,22 +12,35 @@
  *   - локальный Ollama: http://localhost:11434, без ключа.
  * Режимы: auto (Cloud → Local), cloud, local.
  *
- * Отказоустойчивость по ТЗ этапа 1: таймаут 30 с на соединение/первый токен,
- * 90 с бездействие между токенами, 1 ретрай на провайдера, затем (в auto) —
- * следующий провайдер; полный провал — сообщение в UI, приложение не падает.
- * История — в памяти (не персистится), последние 16 сообщений.
+ * Этап 2 — агентский цикл с тулами (двухшаговый по ТЗ):
+ *   модель → tool_calls → исполнение тулов (карточки в UI) → результаты
+ *   обратно модели → финальный текстовый ответ (или ещё тулы; раундов ≤ 4,
+ *   последний — без тулов, чтобы гарантировать текстовый финал).
+ *   Fallback-парсер: облачные Ollama периодически кладут tool call сырым
+ *   JSON в content вместо tool_calls — парсим и исполняем как тул, пузырь
+ *   перезапускается без JSON ([assistant] fallback-parser в журнале).
+ *   История хранит только текст: объявления и ответы модели; тул-ходы
+ *   живут в локальном контексте одного сообщения пользователя.
+ *
+ * Отказоустойчивость (этап 1, без изменений): таймаут 30 с на соединение/
+ * первый токен, 90 с бездействие между токенами, 1 ретрай на провайдера,
+ * затем (в auto) — следующий провайдер; полный провал — сообщение в UI,
+ * приложение не падает. История — в памяти, последние 16 сообщений.
  */
 import { app, BrowserWindow } from 'electron';
 import { Ollama } from 'ollama';
-import type { Message as OllamaMessage } from 'ollama';
+import type { Message as OllamaMessage, Tool, ToolCall } from 'ollama';
 import { AssistantConfigService } from './assistantConfig';
 import { buildSystemPrompt, SystemPromptContext } from './system-prompt';
+import { ToolRegistry } from './tools/registry';
+import { parseToolCallsFromContent } from './tools/fallbackParse';
 import { Logger } from '../logger';
 import {
   AppState,
   AssistantChunkEvent,
   AssistantMessage,
   AssistantStatus,
+  AssistantToolEvent,
   CommandResult,
 } from '../types';
 
@@ -43,7 +56,31 @@ const ATTEMPTS_PER_PROVIDER = 2;
 /** Таймаут проверки доступности для индикатора. */
 const PROBE_TIMEOUT_MS = 2500;
 
+/** Агентские лимиты этапа 2: раундов тул-цикла (последний — только текст). */
+const MAX_TOOL_ROUNDS = 4;
+/** Тул-вызовов в одном раунде (модели шлют 1–2, защита от зацикливания). */
+const MAX_TOOL_CALLS_PER_ROUND = 4;
+/** Общий бюджет тул-исполнений на одно сообщение пользователя. */
+const TOOL_CALLS_BUDGET = 8;
+
 type Provider = 'cloud' | 'local';
+
+/** Итог агентского хода: только текст (тул-ходы в историю не пишутся). */
+interface AgentTurnResult {
+  text: string;
+  aborted: boolean;
+  provider: Provider;
+  model: string;
+}
+
+/** Один раунд общения с моделью (возможно, с тулами). */
+interface RoundResult {
+  text: string;
+  aborted: boolean;
+  toolCalls: ToolCall[];
+  provider: Provider;
+  model: string;
+}
 
 interface AssistantDeps {
   log: Logger;
@@ -52,10 +89,12 @@ interface AssistantDeps {
   getWindow: () => BrowserWindow | null;
   /** Снимок состояния для системного промпта (main подставляет сам). */
   buildContext: () => { state: AppState; activeProfileId: string | null };
+  /** Реестр тулов (P4/этап 2): исполнение и определения для модели. */
+  tools: ToolRegistry;
 }
 
 export class AssistantService {
-  /** История диалога в памяти (не персистится по умолчанию). */
+  /** История диалога в памяти (не персистируется по умолчанию). */
   private history: AssistantMessage[] = [];
   private busy = false;
   /** Пользователь нажал «Стоп». */
@@ -75,8 +114,8 @@ export class AssistantService {
 
   /**
    * Принять сообщение пользователя. {ok:false} — только валидация/занятость;
-   * сам ответ приходит событиями assistant:chunk / assistant:restart /
-   * assistant:done / assistant:error.
+   * сам ответ приходит событиями assistant:chunk / assistant:tool /
+   * assistant:restart / assistant:done / assistant:error.
    */
   async send(text: string): Promise<CommandResult> {
     const msg = (text ?? '').trim();
@@ -96,9 +135,8 @@ export class AssistantService {
 
     const userMsg: AssistantMessage = { role: 'user', content: msg };
     this.history.push(userMsg);
-    const messages = this.buildMessages();
     try {
-      const res = await this.runTurn(messages);
+      const res = await this.runAgentTurn();
       if (res.text) {
         this.history.push({ role: 'assistant', content: res.text });
       } else {
@@ -201,10 +239,88 @@ export class AssistantService {
   }
 
   // ------------------------------------------------------------------
-  // Внутреннее: цикл ответа
+  // Внутреннее: агентский цикл (этап 2)
   // ------------------------------------------------------------------
 
-  /** Системный промпт (снимок приложения) + хвост истории. */
+  /**
+   * Двухшаговый цикл по ТЗ: модель → tool_calls → исполнение тулов →
+   * результаты обратно модели → финальный ответ. Раунды ограничены; последний
+   * идёт без тулов, чтобы цикл гарантированно закончился текстом. История
+   * хранит только текст — тул-ходы живут в локальном messages этого хода.
+   */
+  private async runAgentTurn(): Promise<AgentTurnResult> {
+    // Локальный контекст хода: системный промпт + хвост истории + тул-ходы.
+    const messages: OllamaMessage[] = this.buildMessages();
+    let spent = 0;
+    let lastProvider: Provider = 'local';
+    let lastModel = '';
+
+    for (let round = 1; round <= MAX_TOOL_ROUNDS; round++) {
+      const budgetLeft = TOOL_CALLS_BUDGET - spent;
+      const useTools = round < MAX_TOOL_ROUNDS && budgetLeft > 0;
+      const tools = useTools ? this.deps.tools.definitions() : undefined;
+
+      let res = await this.runTurn(messages, tools);
+      lastProvider = res.provider;
+      lastModel = res.model;
+
+      // Fallback-парсер (этап 2): облачные Ollama периодически кладут
+      // tool call сырым JSON в content вместо tool_calls. Исполняем как тул,
+      // а пузырь в UI перезапускается с чистым текстом (без JSON).
+      if (useTools && res.toolCalls.length === 0 && !res.aborted && res.text) {
+        const fb = parseToolCallsFromContent(res.text);
+        if (fb) {
+          for (const c of fb.calls) {
+            this.deps.log.info(`[assistant] fallback-parser: parsed tool from content, name=${c.name}`);
+          }
+          this.emit('assistant:restart', { provider: res.provider });
+          if (fb.cleaned) {
+            this.emit('assistant:chunk', { delta: fb.cleaned, provider: res.provider } satisfies AssistantChunkEvent);
+          }
+          res = {
+            ...res,
+            text: fb.cleaned,
+            toolCalls: fb.calls.map((c) => ({ function: { name: c.name, arguments: c.args } })),
+          };
+        }
+      }
+
+      // Нет тул-вызовов — это финальный текстовый ответ.
+      if (res.toolCalls.length === 0) {
+        return { text: res.text, aborted: res.aborted, provider: res.provider, model: res.model };
+      }
+
+      // Шаг «assistant объявляет + вызывает тулы» → в контекст хода.
+      messages.push({ role: 'assistant', content: res.text, tool_calls: res.toolCalls });
+
+      const calls = res.toolCalls.slice(0, Math.min(MAX_TOOL_CALLS_PER_ROUND, TOOL_CALLS_BUDGET - spent));
+      for (const call of calls) {
+        if (this.abortRequested) {
+          // Стоп во время тулов: частичный (объявляющий) текст остаётся в чате.
+          return { text: res.text, aborted: true, provider: res.provider, model: res.model };
+        }
+        spent++;
+        const name = call.function?.name ?? '';
+        const result = await this.deps.tools.execute(name, call.function?.arguments ?? {});
+        // Карточка тула в чате (компактная, не JSON) — между пузырями ответа.
+        this.emit('assistant:tool', {
+          name,
+          title: result.title,
+          lines: result.lines,
+          ok: result.ok,
+        } satisfies AssistantToolEvent);
+        // Результат тула → обратно модели (роль 'tool').
+        messages.push({ role: 'tool', content: result.text, tool_name: name });
+      }
+      // Куда-то вело — модель продолжит (новый раунд) с результатами тулов.
+    }
+
+    // Бюджет/раунды исчерпаны — не должно случаться (последний раунд без
+    // тулов гарантирует текст), но чутьё: возвращаем то, что накопилось.
+    return { text: '', aborted: false, provider: lastProvider, model: lastModel };
+  }
+
+  /** Системный промпт (снимок приложения + реестр тулов) + хвост истории. */
   private buildMessages(): OllamaMessage[] {
     const { state, activeProfileId } = this.deps.buildContext();
     const ctx: SystemPromptContext = {
@@ -214,6 +330,7 @@ export class AssistantService {
       electronVersion: process.versions.electron ?? '?',
       chromiumVersion: process.versions.chrome ?? '?',
       platform: `${process.platform} ${process.arch}`,
+      toolLines: this.deps.tools.promptLines(),
     };
     const system = buildSystemPrompt(ctx);
     const tail = this.history.slice(-MAX_HISTORY_MESSAGES);
@@ -236,9 +353,7 @@ export class AssistantService {
   }
 
   /** Цепочка провайдеров по режиму; в каждом — до ATTEMPTS_PER_PROVIDER попыток. */
-  private async runTurn(
-    messages: OllamaMessage[],
-  ): Promise<{ text: string; aborted: boolean; provider: Provider; model: string }> {
+  private async runTurn(messages: OllamaMessage[], tools?: Tool[]): Promise<RoundResult> {
     const cfg = this.deps.config.view();
     const key = this.deps.config.getApiKey();
     const chain: Provider[] =
@@ -263,7 +378,7 @@ export class AssistantService {
       const { endpoint, model } = provider === 'cloud' ? cfg.cloud : cfg.local;
       for (let attempt = 1; attempt <= ATTEMPTS_PER_PROVIDER; attempt++) {
         try {
-          const res = await this.streamOne(provider, endpoint, model, key.key, messages);
+          const res = await this.streamOne(provider, endpoint, model, key.key, messages, tools);
           return { ...res, provider, model };
         } catch (err) {
           // Пользовательский стоп — без ретраев и фолбэков.
@@ -291,9 +406,10 @@ export class AssistantService {
   }
 
   /**
-   * Один стрим-вызов /api/chat с таймаутами: 30 с на первый токен, затем
-   * 90 с бездействие. Пользовательский «Стоп» возвращает частичный текст;
-   * таймаут — бросает ошибку (ретрай/фолбэк на уровне runTurn).
+   * Один стрим-вызов /api/chat (с тулами, если заданы) с таймаутами: 30 с на
+   * первый токен, затем 90 с бездействие. Возвращает текст объявления и
+   * собранные tool_calls стрима. Пользовательский «Стоп» возвращает частичный
+   * текст; таймаут — бросает ошибку (ретрай/фолбэк на уровне runTurn).
    */
   private async streamOne(
     provider: Provider,
@@ -301,7 +417,8 @@ export class AssistantService {
     model: string,
     apiKey: string | null,
     messages: OllamaMessage[],
-  ): Promise<{ text: string; aborted: boolean }> {
+    tools?: Tool[],
+  ): Promise<{ text: string; aborted: boolean; toolCalls: ToolCall[] }> {
     const headers: Record<string, string> =
       provider === 'cloud' && apiKey ? { Authorization: `Bearer ${apiKey}` } : {};
     const client = new Ollama({ host: endpoint, headers });
@@ -332,6 +449,7 @@ export class AssistantService {
     arm(FIRST_TOKEN_TIMEOUT_MS);
 
     let text = '';
+    const toolCalls: ToolCall[] = [];
     try {
       // Установка соединения в ollama-js без fetch-сигнала: гоняем с таймером
       // вручную; проигравший запрос безвредно «повисает» и собирается позже.
@@ -339,6 +457,7 @@ export class AssistantService {
         model,
         messages,
         stream: true,
+        tools,
         options: { temperature: 0.2 },
       });
       const stream = await raceWithTimeout(chatPromise, FIRST_TOKEN_TIMEOUT_MS, () => {
@@ -354,13 +473,19 @@ export class AssistantService {
           this.turnSawChunks = true;
           this.emit('assistant:chunk', { delta, provider } satisfies AssistantChunkEvent);
         }
+        // Ollama присылает tool_calls готовыми пакетами (обычно в финальном
+        // чанке); собираем всё, что появилось в стриме.
+        const calls = part.message?.tool_calls;
+        if (calls && calls.length > 0) {
+          for (const c of calls) toolCalls.push(c);
+        }
       }
-      return { text, aborted: false };
+      return { text, aborted: false, toolCalls };
     } catch (err) {
       if (isAbortError(err)) {
         if (this.abortRequested && !this.timeoutFired) {
           // Стоп по кнопке: частичный текст остаётся в чате.
-          return { text, aborted: true };
+          return { text, aborted: true, toolCalls };
         }
         // Таймаут (первый токен или бездействие) — ошибка попытки.
         throw new Error('таймаут: модель не ответила вовремя');

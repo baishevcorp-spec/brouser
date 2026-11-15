@@ -16,6 +16,7 @@ import { preloadPath, RENDERER_DIR } from './paths';
 import { ProfileManager } from './profileManager';
 import { AssistantConfigService } from './ai/assistantConfig';
 import { AssistantService } from './ai/assistant';
+import { ToolRegistry } from './ai/tools/registry';
 import { openDialog } from './windows/dialogWindow';
 import { TooltipWindowManager } from './windows/tooltipWindow';
 import {
@@ -94,7 +95,9 @@ function bootstrap(): void {
 
     manager = new ProfileManager(config, logger);
 
-    // AI-ассистент (P4, этап 1): каркас + провайдер Ollama Cloud/Local.
+    // AI-ассистент (P4): каркас + провайдер Ollama Cloud/Local (этап 1)
+    // и реестр тулов (этап 2) — обёртки над СУЩЕСТВУЮЩИМИ методами
+    // ProfileManager/Logger, ноль новых привилегий и IPC-каналов.
     // Zero-Trust: ассистент получает только снимок состояния для промпта.
     assistantConfig = new AssistantConfigService(logger);
     assistantConfig.load();
@@ -105,6 +108,17 @@ function bootstrap(): void {
       buildContext: () => ({
         state: manager!.getState(),
         activeProfileId: selectedProfileId,
+      }),
+      tools: new ToolRegistry({
+        manager,
+        log: logger,
+        activeProfileId: () => selectedProfileId,
+        versions: () => ({
+          app: app.getVersion(),
+          electron: process.versions.electron ?? '?',
+          chromium: process.versions.chrome ?? '?',
+          platform: `${process.platform} ${process.arch}`,
+        }),
       }),
     });
 

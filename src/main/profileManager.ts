@@ -130,6 +130,8 @@ export class ProfileManager {
         url: p.url,
         hasProxy: !!p.proxy,
         proxyScheme: mv?.proxy?.scheme ?? (p.proxy ? (parseProxy(p.proxy)?.scheme ?? null) : null),
+        // Хост без кредов/порта: нужен тулу profile_details (P4/этап 2).
+        proxyHost: p.proxy ? (parseProxy(p.proxy)?.host ?? null) : null,
         extensions:
           mv?.extensions ??
           (p.extensions ?? []).map((source) => ({ source, name: null, id: null, ok: true, error: null, note: null })),
