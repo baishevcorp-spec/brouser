@@ -547,6 +547,16 @@ details.howto .howto-note { color: var(--muted); }
 
 /* ---------- Окно «Настройки»: управление расширениями профилей ---------- */
 body.dialog .settings-card { display: flex; flex-direction: column; }
+/* Два раздела (расширения + AI-ассистент) в общем скролле. */
+.settings-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding-right: 2px;
+}
 .settings-section { display: flex; flex-direction: column; gap: 12px; min-height: 0; }
 .settings-row { display: flex; align-items: flex-end; gap: 8px; }
 .settings-row .grow { flex: 1; min-width: 0; }
@@ -568,6 +578,13 @@ body.dialog select {
   font: inherit;
   outline: none;
 }
+body.dialog input[type='text'],
+body.dialog input[type='password'] {
+  font: inherit;
+}
+#a-status { word-break: break-word; }
+#a-status.ok { color: var(--ok); }
+#a-status.err { color: var(--danger); }
 .ext-list {
   display: flex;
   flex-direction: column;
@@ -767,6 +784,132 @@ textarea { resize: vertical; min-height: 66px; }
 .log-row .m { flex: 1; word-break: break-word; color: var(--text); }
 .log-row.error .m { color: var(--danger); }
 .log-row.warn .m { color: var(--warn); }
+
+/* ---------- AI-ассистент (P4, этап 1) ----------
+   Правая панель с резервацией layout (механика журнала): main резервирует
+   место (ui:assistant-panel), WebContentsView панель не перекрывает.
+   Геометрия зеркалит assistantPanelReserve в layout.ts: right:16,
+   ширина min(400, vw-32). Тема — glass, как весь Brouser. */
+#assistant {
+  position: fixed;
+  right: 16px;
+  top: calc(var(--toolbar-h, 52px) + 22px);
+  bottom: var(--app-pad, 10px);
+  width: min(400px, calc(100vw - 32px));
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  z-index: 250;
+}
+
+#assistant[hidden] { display: none; }
+
+.assistant-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 26px;
+}
+
+.assistant-title {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.assistant-head .spacer { flex: 1; }
+
+.assistant-status {
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 2px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--stroke);
+  background: var(--glass-2);
+  color: var(--muted);
+  white-space: nowrap;
+  cursor: default;
+}
+
+.assistant-status[data-state='cloud'] { color: var(--accent); border-color: var(--stroke-strong); }
+.assistant-status[data-state='local'] { color: var(--warn); border-color: var(--stroke-strong); }
+.assistant-status[data-state='off'] { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 35%, transparent); }
+.assistant-status[data-state='busy'] { color: var(--accent); animation: breathe 1.6s ease-in-out infinite; }
+.assistant-status[data-state='probe'] { animation: breathe 1.2s ease-in-out infinite; }
+
+.assistant-messages {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-right: 2px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.msg {
+  max-width: 88%;
+  padding: 8px 11px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--stroke);
+  background: var(--glass-2);
+  white-space: pre-wrap;
+  word-break: break-word;
+  user-select: text;
+}
+
+.msg.user {
+  align-self: flex-end;
+  background: var(--accent-soft);
+  border-color: var(--stroke-strong);
+  border-bottom-right-radius: 4px;
+}
+
+.msg.bot {
+  align-self: flex-start;
+  border-bottom-left-radius: 4px;
+}
+
+.msg.bot.pending::after {
+  content: '···';
+  color: var(--accent);
+  letter-spacing: 2px;
+  animation: breathe 1.2s ease-in-out infinite;
+}
+
+.msg.sys {
+  align-self: center;
+  max-width: 100%;
+  text-align: center;
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+  border-color: color-mix(in srgb, var(--danger) 25%, transparent);
+  font-size: 11.5px;
+}
+
+.assistant-form {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  min-height: 44px;
+}
+
+.assistant-form textarea {
+  flex: 1;
+  min-width: 0;
+  resize: none;
+  min-height: 44px;
+  max-height: 110px;
+  overflow-y: auto;
+  padding: 10px 12px;
+  font: inherit;
+  line-height: 1.4;
+}
+
+.assistant-form .ibtn { flex: 0 0 auto; }
 
 /* ---------- Тост ---------- */
 #toast {

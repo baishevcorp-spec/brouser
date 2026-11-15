@@ -10,42 +10,103 @@
   <!--
     Окно «Настройки» — отдельное BrowserWindow (родитель — главное окно;
     НЕ модальное). Заголовок и закрытие — в нативном тайтл-баре.
+
     Раздел «Расширения»: управление распакованными расширениями выбранного
     профиля — добавить через системный выбор папки (проверка manifest.json),
     убрать, статус загрузки в живую сессию. Изменения применяются к сессии
     немедленно (без пересоздания ячейки).
+
+    Раздел «AI-ассистент» (P4, этап 1): режим Cloud/Local/Auto, endpoints и
+    МОДЕЛИ (модель — поле конфига: список моделей Ollama Cloud меняется),
+    API-ключ (шифруется safeStorage, наружу не возвращается). История
+    разделов — общий скролл-контейнер.
   -->
   <div class="glass card settings-card">
-    <section class="settings-section">
-      <div class="settings-row">
-        <label class="field grow">
-          <span class="field-label">Профиль</span>
-          <select id="s-profile" aria-label="Профиль"></select>
+    <div class="settings-scroll">
+      <section class="settings-section">
+        <div class="settings-row">
+          <label class="field grow">
+            <span class="field-label">Профиль</span>
+            <select id="s-profile" aria-label="Профиль"></select>
+          </label>
+          <button type="button" id="s-refresh" class="ibtn sm" data-icon="rotate" data-tip="Перечитать состояние (профили и статусы расширений)" aria-label="Обновить"></button>
+        </div>
+
+        <div class="settings-subhead">Расширения профиля</div>
+        <div id="s-ext-list" class="ext-list" aria-live="polite"></div>
+
+        <div class="file-row">
+          <button type="button" id="s-add" class="ibtn sm accent wide-text" data-icon="folder" data-tip="Системный диалог: выберите папку распакованного расширения (с manifest.json) — подключится к профилю и его сессии" aria-label="Добавить распакованное расширение"></button>
+          <span class="hint">распакованное расширение — папка с manifest.json</span>
+        </div>
+
+        <div class="settings-subhead">Ротация IP мобильного прокси</div>
+        <div class="settings-row">
+          <span id="s-rotation-info" class="hint grow">—</span>
+          <button type="button" id="s-rotate" class="ibtn sm accent" data-icon="zap" data-tip="Сменить IP прокси профиля сейчас: запрос провайдеру (если задан URL ротации) + переподключение сессии к прокси. Гео-эмуляция профиля не трогается." aria-label="Сменить IP сейчас"></button>
+        </div>
+
+        <label class="checkbox-row">
+          <input type="checkbox" id="s-reload" checked>
+          <span>Перезагрузить страницу профиля после изменения (нужно для content-скриптов)</span>
         </label>
-        <button type="button" id="s-refresh" class="ibtn sm" data-icon="rotate" data-tip="Перечитать состояние (профили и статусы расширений)" aria-label="Обновить"></button>
-      </div>
 
-      <div class="settings-subhead">Расширения профиля</div>
-      <div id="s-ext-list" class="ext-list" aria-live="polite"></div>
+        <div id="s-status" class="hint" hidden></div>
+      </section>
 
-      <div class="file-row">
-        <button type="button" id="s-add" class="ibtn sm accent wide-text" data-icon="folder" data-tip="Системный диалог: выберите папку распакованного расширения (с manifest.json) — подключится к профилю и его сессии" aria-label="Добавить распакованное расширение"></button>
-        <span class="hint">распакованное расширение — папка с manifest.json</span>
-      </div>
+      <section class="settings-section" aria-label="AI-ассистент">
+        <div class="settings-subhead">AI-ассистент — Ollama</div>
 
-      <div class="settings-subhead">Ротация IP мобильного прокси</div>
-      <div class="settings-row">
-        <span id="s-rotation-info" class="hint grow">—</span>
-        <button type="button" id="s-rotate" class="ibtn sm accent" data-icon="zap" data-tip="Сменить IP прокси профиля сейчас: запрос провайдеру (если задан URL ротации) + переподключение сессии к прокси. Гео-эмуляция профиля не трогается." aria-label="Сменить IP сейчас"></button>
-      </div>
+        <div class="settings-row">
+          <label class="field grow">
+            <span class="field-label">Режим</span>
+            <select id="a-mode" aria-label="Режим работы ассистента">
+              <option value="auto">Авто — Cloud, при сбое локальный</option>
+              <option value="cloud">Только Ollama Cloud</option>
+              <option value="local">Только локальный Ollama</option>
+            </select>
+          </label>
+          <button type="button" id="a-probe" class="ibtn sm accent" data-icon="zap" data-tip="Проверить доступность провайдера сейчас (дешёвая проба — Cloud → Local)" aria-label="Проверить соединение"></button>
+        </div>
 
-      <label class="checkbox-row">
-        <input type="checkbox" id="s-reload" checked>
-        <span>Перезагрузить страницу профиля после изменения (нужно для content-скриптов)</span>
-      </label>
+        <div class="settings-row">
+          <label class="field grow">
+            <span class="field-label">Cloud endpoint</span>
+            <input id="a-cloud-endpoint" type="text" placeholder="https://ollama.com" spellcheck="false" autocomplete="off">
+          </label>
+          <label class="field grow">
+            <span class="field-label">Cloud модель</span>
+            <input id="a-cloud-model" type="text" placeholder="gpt-oss:20b" spellcheck="false" autocomplete="off">
+          </label>
+        </div>
 
-      <div id="s-status" class="hint" hidden></div>
-    </section>
+        <div class="settings-row">
+          <label class="field grow">
+            <span class="field-label">API-ключ Ollama Cloud</span>
+            <input id="a-key" type="password" placeholder="ключ не задан" spellcheck="false" autocomplete="off">
+          </label>
+          <button type="button" id="a-key-remove" class="ibtn sm danger" data-icon="x" data-tip="Удалить сохранённый ключ" aria-label="Удалить сохранённый ключ" hidden></button>
+        </div>
+        <span class="hint" id="a-key-hint">Ключ шифруется системным хранилищем ОС и не показывается обратно. Альтернатива — переменная окружения OLLAMA_API_KEY.</span>
+
+        <div class="settings-row">
+          <label class="field grow">
+            <span class="field-label">Local endpoint</span>
+            <input id="a-local-endpoint" type="text" placeholder="http://localhost:11434" spellcheck="false" autocomplete="off">
+          </label>
+          <label class="field grow">
+            <span class="field-label">Local модель</span>
+            <input id="a-local-model" type="text" placeholder="qwen2.5:7b" spellcheck="false" autocomplete="off">
+          </label>
+        </div>
+        <span class="hint">Локальный режим требует запущенного «ollama serve» и скачанной модели (ollama pull).</span>
+
+        <div class="settings-row">
+          <span class="hint grow" id="a-status" hidden></span>
+          <button type="button" id="a-save" class="ibtn sm accent wide-text" data-icon="save" aria-label="Сохранить настройки ассистента">Сохранить</button>
+        </div>
+      </section>
+    </div>
   </div>
 
   <script src="dialog-settings.js"></script>

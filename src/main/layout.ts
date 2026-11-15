@@ -88,3 +88,17 @@ export function logPanelReserve(contentWidth: number, open: boolean): number {
   const panelW = Math.min(430, Math.max(0, contentWidth - 32));
   return panelW + 10;
 }
+
+/**
+ * Сколько DIP справа резервировать под панель AI-ассистента (P4, этап 1).
+ * Геометрия = #assistant в styles.css: right:16px, ширина min(400, vw-32),
+ * зазор 10 — WebContentsView не перекрывает панель, как у журнала.
+ * Панели журнала и ассистента взаимозаменяемы (открытие одной закрывает
+ * другую — renderer это гарантирует), но резерв считаем суммой: если обе
+ * каким-то образом открыты, сетка честно сожмётся, а не перекроется.
+ */
+export function assistantPanelReserve(contentWidth: number, open: boolean): number {
+  if (!open) return 0;
+  const panelW = Math.min(400, Math.max(0, contentWidth - 32));
+  return panelW + 10;
+}

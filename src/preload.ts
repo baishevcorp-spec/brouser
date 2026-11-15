@@ -12,6 +12,11 @@ import { contextBridge, ipcRenderer } from 'electron';
 import type { IpcRendererEvent } from 'electron';
 import type {
   AppState,
+  AssistantChunkEvent,
+  AssistantDoneEvent,
+  AssistantErrorEvent,
+  AssistantRestartEvent,
+  AssistantStatus,
   BrouserApi,
   CookieImportInput,
   CookieImportResult,
@@ -66,14 +71,28 @@ const api: BrouserApi = {
   tooltipShow: (payload) => ipcRenderer.send('tooltip:show', payload),
   tooltipHide: () => ipcRenderer.send('tooltip:hide'),
 
-  // События состояния UI (односторонние, P1.2 / P1.1)
+  // События состояния UI (односторонние, P1.2 / P1.1 / P4)
   layoutReady: () => ipcRenderer.send('layout:ready'),
   setLogPanel: (open) => ipcRenderer.send('ui:log-panel', open),
+  // Панель AI-ассистента: main резервирует место под неё (P4/этап 1).
+  setAssistantPanel: (open) => ipcRenderer.send('ui:assistant-panel', open),
+  // Выделенный профиль — «активный» для ассистента (развилка 4A).
+  setSelectedProfile: (id) => ipcRenderer.send('ui:selected-profile', id),
+
+  // AI-ассистент (P4, этап 1): чат стримится событиями assistant:*.
+  assistantSend: (text) => ipcRenderer.invoke('assistant:send', text),
+  assistantAbort: () => ipcRenderer.invoke('assistant:abort'),
+  assistantClear: () => ipcRenderer.invoke('assistant:clear'),
+  assistantProbe: () => ipcRenderer.invoke('assistant:probe'),
 
   // События main -> renderer
   onProfilesUpdated: (cb) => subscribe<AppState>('profiles-updated', cb),
   onLayoutChanged: (cb) => subscribe<LayoutId>('layout-changed', cb),
   onLogMessage: (cb) => subscribe<LogEntry>('log-message', cb),
+  onAssistantChunk: (cb) => subscribe<AssistantChunkEvent>('assistant:chunk', cb),
+  onAssistantRestart: (cb) => subscribe<AssistantRestartEvent>('assistant:restart', cb),
+  onAssistantDone: (cb) => subscribe<AssistantDoneEvent>('assistant:done', cb),
+  onAssistantError: (cb) => subscribe<AssistantErrorEvent>('assistant:error', cb),
 };
 
 contextBridge.exposeInMainWorld('brouser', api);

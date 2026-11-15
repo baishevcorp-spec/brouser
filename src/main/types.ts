@@ -349,6 +349,13 @@ export interface SettingsDialogApi {
   reloadProfile(profileId: string): Promise<void>;
   /** Ротация мобильного прокси (P3): сменить IP профиля сейчас (триггер). */
   rotateProxy(profileId: string): Promise<CommandResult>;
+  /** ---------- AI-ассистент (P4, этап 1: раздел в этом же окне) ---------- */
+  /** Настройки ассистента без ключа (только факт его наличия). */
+  getAssistantConfig(): Promise<AssistantConfigView>;
+  /** Сохранить настройки; apiKey: '' = удалить, undefined = не трогать. */
+  setAssistantConfig(input: AssistantConfigInput): Promise<CommandResult>;
+  /** Проверить доступность провайдера («Cloud / Local / Недоступен»). */
+  probeAssistant(): Promise<AssistantStatus>;
   closeWindow(): void;
 }
 
@@ -357,6 +364,80 @@ export interface ConfirmDialogApi {
   /** Удаление — только здесь, с явным подтверждением человека. */
   removeProfile(profileId: string): Promise<CommandResult>;
   closeWindow(): void;
+}
+
+// ==================== AI-ассистент (P4, этап 1) ====================
+
+/** Режим работы ассистента: авто (Cloud → Local), только Cloud, только Local. */
+export type AssistantMode = 'auto' | 'cloud' | 'local';
+
+/** Настройки одного провайдера LLM (Ollama Cloud / локальный Ollama). */
+export interface AssistantEndpointConfig {
+  /** Базовый URL (без /api/...): https://ollama.com или http://localhost:11434. */
+  endpoint: string;
+  /** Модель — поле конфига, НЕ константа: список моделей Ollama Cloud меняется. */
+  model: string;
+}
+
+/** Публичный вид настроек ассистента (ключ не возвращается — только факт наличия). */
+export interface AssistantConfigView {
+  mode: AssistantMode;
+  cloud: AssistantEndpointConfig;
+  local: AssistantEndpointConfig;
+  /** API-ключ Ollama Cloud задан (зашифрован в хранилище ОС или взят из env). */
+  hasKey: boolean;
+  /** Ключ взят из переменной окружения OLLAMA_API_KEY, а не из хранилища ОС. */
+  keyFromEnv: boolean;
+}
+
+/** Вход настроек из UI: apiKey '' = удалить, undefined = не трогать. */
+export interface AssistantConfigInput {
+  mode: AssistantMode;
+  cloud?: Partial<AssistantEndpointConfig>;
+  local?: Partial<AssistantEndpointConfig>;
+  apiKey?: string;
+}
+
+/** Состояние индикатора «Cloud / Local / Недоступен» (панель и «Настройки»). */
+export interface AssistantStatus {
+  ok: boolean;
+  /** Провайдер, доступный прямо сейчас. */
+  provider: 'cloud' | 'local' | 'none';
+  /** Короткая метка для UI: «Cloud», «Local», «Недоступен». */
+  label: string;
+  /** Причина недоступности / деталь проверки (не содержит ключа). */
+  detail: string | null;
+  mode: AssistantMode;
+  hasKey: boolean;
+}
+
+/** Сообщение чата ассистента (история живёт в памяти, не персистится). */
+export interface AssistantMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+/** Кусок стрима ответа main -> renderer (канал assistant:chunk). */
+export interface AssistantChunkEvent {
+  delta: string;
+  provider: 'cloud' | 'local';
+}
+
+/** Завершение ответа main -> renderer (канал assistant:done). */
+export interface AssistantDoneEvent {
+  aborted: boolean;
+  provider: 'cloud' | 'local' | null;
+  model: string | null;
+}
+
+/** Перезапуск пузыря ответа после ретрая/фолбэка (канал assistant:restart). */
+export interface AssistantRestartEvent {
+  provider: 'cloud' | 'local';
+}
+
+/** Ошибка main -> renderer (канал assistant:error). */
+export interface AssistantErrorEvent {
+  message: string;
 }
 
 /** API preload-tooltip.ts (окно rich-тултипов). */
@@ -432,8 +513,26 @@ export interface BrouserApi {
   layoutReady(): void;
   /** Панель журнала открыта/закрыта: main резервирует место под неё (P1.1). */
   setLogPanel(open: boolean): void;
+  /** Панель AI-ассистента открыта/закрыта: main резервирует место (P4, этап 1). */
+  setAssistantPanel(open: boolean): void;
+  /** Выделенный профиль (клик по шапке ячейки) — «активный» для ассистента (P4). */
+  setSelectedProfile(id: string | null): void;
+
+  /** ---------- AI-ассистент (P4, этап 1) ---------- */
+  /** Отправить сообщение; ответ приходит событиями chunk/done/error. */
+  assistantSend(text: string): Promise<CommandResult>;
+  /** Остановить текущий ответ (частичный текст сохраняется в чате). */
+  assistantAbort(): void;
+  /** Очистить историю (в памяти main) и панель чата. */
+  assistantClear(): void;
+  /** Проверить доступность провайдера: индикатор «Cloud / Local / Недоступен». */
+  assistantProbe(): Promise<AssistantStatus>;
 
   onProfilesUpdated(cb: (state: AppState) => void): () => void;
   onLayoutChanged(cb: (layout: LayoutId) => void): () => void;
   onLogMessage(cb: (entry: LogEntry) => void): () => void;
+  onAssistantChunk(cb: (ev: AssistantChunkEvent) => void): () => void;
+  onAssistantRestart(cb: (ev: AssistantRestartEvent) => void): () => void;
+  onAssistantDone(cb: (ev: AssistantDoneEvent) => void): () => void;
+  onAssistantError(cb: (ev: AssistantErrorEvent) => void): () => void;
 }

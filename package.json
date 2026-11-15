@@ -26,5 +26,8 @@
   "allowScripts": {
     "electron@33.4.11": true,
     "esbuild@0.28.2": true
+  },
+  "dependencies": {
+    "ollama": "^0.6.4"
   }
 }

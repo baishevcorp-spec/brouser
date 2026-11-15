@@ -20,6 +20,7 @@ import { LAYOUTS, THEMES } from '../main/types';
 import type { AppState, ProfileState, ThemeId } from '../main/types';
 import { ICONS, mountIcons } from './icons';
 import { resolveTooltip } from './tooltips';
+import { initAssistantChat, probeAssistantStatus } from './assistant';
 
 const api = window.brouser;
 
@@ -30,6 +31,7 @@ const api = window.brouser;
 let state: AppState = { profiles: [], layout: '2x2', theme: 'dark', capacity: 4, logs: [], inputSync: false };
 let selectedId: string | null = null;
 let logOpen = false;
+let assistantOpen = false;
 
 const gridEl = document.getElementById('grid') as HTMLElement;
 const toolbarEl = document.getElementById('toolbar') as HTMLElement;
@@ -39,6 +41,8 @@ const themeBtn = document.getElementById('btn-theme') as HTMLButtonElement;
 const syncBtn = document.getElementById('btn-sync') as HTMLButtonElement;
 const logsBtn = document.getElementById('btn-logs') as HTMLButtonElement;
 const logPanelEl = document.getElementById('logpanel') as HTMLElement;
+const assistantBtn = document.getElementById('btn-assistant') as HTMLButtonElement;
+const assistantPanelEl = document.getElementById('assistant') as HTMLElement;
 const toastEl = document.getElementById('toast') as HTMLElement;
 
 // ------------------------------------------------------------------
@@ -50,6 +54,8 @@ document.addEventListener('DOMContentLoaded', () => {
   bindToolbar();
   bindTooltips();
   bindGridDnd();
+  // Чат AI-ассистента (P4, этап 1): отправка/стрим/стоп/очистка/индикатор.
+  initAssistantChat();
 
   // Геометрия из preload -> CSS-переменные (P1.1): отрисовка в renderer
   // и расчёт ячеек в main используют один источник констант.
@@ -160,13 +166,26 @@ function bindToolbar(): void {
 
   // Журнал: открытие/закрытие меняет доступную сетке ширину — сообщаем main,
   // чтобы он резервировал место под панель и не перекрывал views.
+  // Правая панель одна: открытие журнала сворачивает ассистента.
   logsBtn.addEventListener('click', () => {
+    if (!logOpen) closeAssistantPanel();
     logOpen = !logOpen;
     logsBtn.setAttribute('aria-expanded', String(logOpen));
     logPanelEl.hidden = !logOpen;
     api.setLogPanel(logOpen);
     if (logOpen) renderLogs();
   });
+
+  // AI-ассистент (P4, этап 1): панель справа с резервацией layout —
+  // как журнал, взаимозаменяемы (открытие ассистента сворачивает журнал).
+  assistantBtn.addEventListener('click', () => {
+    if (assistantOpen) {
+      closeAssistantPanel();
+    } else {
+      openAssistantPanel();
+    }
+  });
+  document.getElementById('assistant-collapse')?.addEventListener('click', () => closeAssistantPanel());
 
   // Настройки: управление расширениями профилей (отдельное окно).
   document.getElementById('btn-settings')?.addEventListener('click', () => {
@@ -184,16 +203,45 @@ function bindToolbar(): void {
     void api.toggleMaximize();
   });
 
-  // Escape: закрываем панель журнала (диалоги живут в отдельных окнах и
-  // обрабатывают Esc сами).
+  // Escape: закрываем панель ассистента или журнал (диалоги живут в
+  // отдельных окнах и обрабатывают Esc сами).
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && logOpen) {
+    if (e.key !== 'Escape') return;
+    if (assistantOpen) {
+      closeAssistantPanel();
+    } else if (logOpen) {
       logOpen = false;
       logsBtn.setAttribute('aria-expanded', 'false');
       logPanelEl.hidden = true;
       api.setLogPanel(false);
     }
   });
+}
+
+/** Панели справа (журнал / ассистент) — одна вместо другой: сворачиваем
+ *  ассистента при открытии журнала и наоборот. */
+function closeAssistantPanel(): void {
+  if (!assistantOpen) return;
+  assistantOpen = false;
+  assistantBtn.setAttribute('aria-expanded', 'false');
+  assistantPanelEl.hidden = true;
+  api.setAssistantPanel(false);
+}
+
+function openAssistantPanel(): void {
+  if (assistantOpen) return;
+  if (logOpen) {
+    logOpen = false;
+    logsBtn.setAttribute('aria-expanded', 'false');
+    logPanelEl.hidden = true;
+    api.setLogPanel(false);
+  }
+  assistantOpen = true;
+  assistantBtn.setAttribute('aria-expanded', 'true');
+  assistantPanelEl.hidden = false;
+  api.setAssistantPanel(true);
+  // Индикатор «Cloud / Local / Недоступен» — дешёвая проба при открытии.
+  void probeAssistantStatus();
 }
 
 function updateRemoveBtn(): void {
@@ -237,11 +285,18 @@ function renderAll(): void {
   syncBtn.setAttribute('aria-pressed', String(state.inputSync));
   syncBtn.dataset.tipId = state.inputSync ? 'btn-sync-on' : 'btn-sync-off';
 
-  // Выделение могло исчезнуть (профиль удалён / скрыт).
+  // Выделение могло исчезнуть (профиль удалён / скрыт) — сообщаем main
+  // «активный профиль» (P4: подстановка в промпт ассистента, развилка 4A).
   if (selectedId && !state.profiles.some((p) => p.id === selectedId)) {
     selectedId = null;
   }
+  pushSelection();
   updateRemoveBtn();
+}
+
+/** Выделенный профиль -> main (ui:selected-profile): «этот профиль» для ассистента. */
+function pushSelection(): void {
+  api.setSelectedProfile(selectedId);
 }
 
 function buildCell(p: ProfileState, cellIndex: number): HTMLElement {
@@ -303,10 +358,12 @@ function buildCell(p: ProfileState, cellIndex: number): HTMLElement {
 
   head.append(btnCopy, btnCookies, btnReload, btnDev, btnDel);
 
-  // Клик по шапке выделяет профиль (для кнопки удаления в тулбаре).
+  // Клик по шапке выделяет профиль (для кнопки удаления в тулбаре и как
+  // «активный профиль» для ассистента — P4, развилка 4A).
   head.addEventListener('click', (e) => {
     if ((e.target as HTMLElement).closest('button')) return;
     selectedId = selectedId === p.id ? null : p.id;
+    pushSelection();
     renderAll();
   });
 

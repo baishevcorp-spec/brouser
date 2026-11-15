@@ -14,10 +14,15 @@ import { ConfigService } from './config';
 import { Logger } from './logger';
 import { preloadPath, RENDERER_DIR } from './paths';
 import { ProfileManager } from './profileManager';
+import { AssistantConfigService } from './ai/assistantConfig';
+import { AssistantService } from './ai/assistant';
 import { openDialog } from './windows/dialogWindow';
 import { TooltipWindowManager } from './windows/tooltipWindow';
 import {
   AppState,
+  AssistantConfigInput,
+  AssistantConfigView,
+  AssistantStatus,
   CommandResult,
   CookieImportInput,
   CookieImportResult,
@@ -65,6 +70,11 @@ function bootstrap(): void {
   let logger: Logger | null = null;
   let config: ConfigService | null = null;
   let manager: ProfileManager | null = null;
+  /** AI-ассистент (P4, этап 1): настройки + сервис провайдеров. */
+  let assistantConfig: AssistantConfigService | null = null;
+  let assistant: AssistantService | null = null;
+  /** Выделенный профиль («активный» для ассистента, развилка 4A): renderer -> main. */
+  let selectedProfileId: string | null = null;
   /** Окно rich-тултипов: прозрачный always-on-top overlay поверх views. */
   let tooltips: TooltipWindowManager | null = null;
 
@@ -83,6 +93,20 @@ function bootstrap(): void {
     config.load();
 
     manager = new ProfileManager(config, logger);
+
+    // AI-ассистент (P4, этап 1): каркас + провайдер Ollama Cloud/Local.
+    // Zero-Trust: ассистент получает только снимок состояния для промпта.
+    assistantConfig = new AssistantConfigService(logger);
+    assistantConfig.load();
+    assistant = new AssistantService({
+      log: logger,
+      config: assistantConfig,
+      getWindow: () => win,
+      buildContext: () => ({
+        state: manager!.getState(),
+        activeProfileId: selectedProfileId,
+      }),
+    });
 
     // Все записи журнала дублируются в renderer (канал 'log-message').
     logger.setBroadcast((entry) => {
@@ -354,7 +378,7 @@ function bootstrap(): void {
       return { ok: true };
     });
 
-    // Окно «Настройки»: управление распакованными расширениями профилей.
+    // Окно «Настройки»: управление распакованными расширениями профилей + AI-ассистент.
     ipcMain.handle('dialog:open-settings', (): CommandResult => {
       if (!win || win.isDestroyed()) return { ok: false, error: 'Главное окно закрыто' };
       openDialog(win, logger!, {
@@ -363,9 +387,9 @@ function bootstrap(): void {
         query: { theme: manager!.getState().theme },
         title: 'Настройки — Brouser',
         width: 720,
-        height: 540,
+        height: 660,
         minWidth: 560,
-        minHeight: 420,
+        minHeight: 520,
       });
       return { ok: true };
     });
@@ -443,6 +467,30 @@ function bootstrap(): void {
     ipcMain.on('layout:ready', () => manager!.onLayoutReady());
     // Панель журнала открыта/закрыта — резервируем место под неё.
     ipcMain.on('ui:log-panel', (_e, open: boolean) => manager!.setLogPanel(!!open));
+    // Панель AI-ассистента открыта/закрыта — резервируем место (P4/этап 1).
+    ipcMain.on('ui:assistant-panel', (_e, open: boolean) => manager!.setAssistantPanel(!!open));
+    // Выделенный профиль = «активный» для ассистента (развилка 4A):
+    // main валидирует id по живому состоянию и сам подставляет его в промпт.
+    ipcMain.on('ui:selected-profile', (_e, id: unknown) => {
+      const val = typeof id === 'string' && id ? id : null;
+      selectedProfileId =
+        val && manager!.getState().profiles.some((p) => p.id === val) ? val : null;
+    });
+
+    // ---------- AI-ассистент (P4, этап 1) ----------
+    // Ответ стримится событиями assistant:chunk/restart/done/error в renderer.
+    ipcMain.handle('assistant:send', (_e, text: string): Promise<CommandResult> =>
+      assistant!.send(typeof text === 'string' ? text : ''),
+    );
+    ipcMain.handle('assistant:abort', (): void => assistant!.abort());
+    ipcMain.handle('assistant:clear', (): void => assistant!.clear());
+    ipcMain.handle('assistant:probe', (): Promise<AssistantStatus> => assistant!.probe());
+    // Настройки (окно «Настройки → AI-ассистент»): ключ наружу не возвращается.
+    ipcMain.handle('assistant:config:get', (): AssistantConfigView => assistantConfig!.view());
+    ipcMain.handle(
+      'assistant:config:set',
+      (_e, input: AssistantConfigInput): CommandResult => assistantConfig!.applyInput(input ?? {}),
+    );
   }
 
   app.on('window-all-closed', () => {

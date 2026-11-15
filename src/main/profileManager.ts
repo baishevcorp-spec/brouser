@@ -46,7 +46,7 @@ import {
   splitDomains,
   toCookieSetDetails,
 } from './cookies';
-import { Cell, computeCells, logPanelReserve, PARKED } from './layout';
+import { Cell, computeCells, logPanelReserve, assistantPanelReserve, PARKED } from './layout';
 import { InputSync } from './sync';
 
 /** Внутреннее описание активного представления. */
@@ -93,6 +93,8 @@ export class ProfileManager {
   private layoutReadyFlag = false;
   /** Панель журнала открыта (резервируем место справа). */
   private logPanelOpen = false;
+  /** Панель AI-ассистента открыта (резервируем место справа, P4/этап 1). */
+  private assistantPanelOpen = false;
   /** Синхронизатор действий (P3): реплей ввода между видимыми ячейками. */
   private inputSync: InputSync;
   /** Таймеры автосмены IP (P3: ротация мобильного прокси), ключ — id профиля. */
@@ -170,16 +172,26 @@ export class ProfileManager {
     this.recomputeLayout();
   }
 
+  /** Панель AI-ассистента открыта/закрыта — пересервируем место (P4/этап 1). */
+  setAssistantPanel(open: boolean): void {
+    if (this.assistantPanelOpen === open) return;
+    this.assistantPanelOpen = open;
+    this.recomputeLayout();
+  }
+
   /**
    * Пересчитать сетку и расставить все представления.
    * Вызывается: после layout-ready, при resize (throttle 16мс в index.ts),
-   * смене раскладки, добавлении/удалении профиля, переключении журнала.
+   * смене раскладки, добавлении/удалении профиля, переключении журнала,
+   * открытии/закрытии панели ассистента.
    */
   recomputeLayout(): void {
     if (!this.win || this.win.isDestroyed() || !this.layoutReadyFlag) return;
     try {
       const content = this.win.getContentBounds();
-      const reserved = logPanelReserve(content.width, this.logPanelOpen);
+      const reserved =
+        logPanelReserve(content.width, this.logPanelOpen) +
+        assistantPanelReserve(content.width, this.assistantPanelOpen);
       const cells = computeCells(this.config.config.layout, content, reserved);
       const profiles = this.config.config.profiles;
       // Пустой список профилей — безопасный no-op: деление только на константы
@@ -1077,7 +1089,9 @@ export class ProfileManager {
     let cell: Cell = PARKED;
     try {
       const content = this.win.getContentBounds();
-      const reserved = logPanelReserve(content.width, this.logPanelOpen);
+      const reserved =
+        logPanelReserve(content.width, this.logPanelOpen) +
+        assistantPanelReserve(content.width, this.assistantPanelOpen);
       const cells = computeCells(this.config.config.layout, content, reserved);
       const index = this.config.config.profiles.findIndex((p) => p.id === id);
       if (index >= 0 && index < cells.length) cell = cells[index] as Cell;
@@ -1310,6 +1324,7 @@ export class ProfileManager {
     this.pendingViews.clear();
     this.layoutReadyFlag = false;
     this.logPanelOpen = false;
+    this.assistantPanelOpen = false;
     app.removeListener('login', this.handleLogin);
   }
 }

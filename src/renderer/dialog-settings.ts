@@ -6,8 +6,14 @@
  * системный выбор папки (preload → ext:pick-dir, проверка manifest.json в
  * main), убрать (конфиг + живая сессия). Тема — из query (?theme).
  * Состояние перечитывается после каждого действия и по кнопке «Обновить».
+ *
+ * Раздел «AI-ассистент» (P4, этап 1): режим Cloud/Local/Auto, endpoints и
+ * модели (настраиваются — модели Ollama Cloud со временем меняются),
+ * API-ключ (не возвращается из main — только факт наличия), проба
+ * доступности и сохранение. Ключ «удалить» — отдельная кнопка, чтобы
+ * пустое поле означало «не трогать», а не «стереть».
  */
-import type { AppState, ProfileState } from '../main/types';
+import type { AppState, AssistantConfigView, AssistantStatus, ProfileState } from '../main/types';
 import { mountIcons } from './icons';
 
 const api = window.settingsDialog;
@@ -24,11 +30,28 @@ const statusEl = document.getElementById('s-status') as HTMLElement;
 const rotationInfoEl = document.getElementById('s-rotation-info') as HTMLElement;
 const rotateBtn = document.getElementById('s-rotate') as HTMLButtonElement;
 
+// ---------- AI-ассистент ----------
+const aMode = document.getElementById('a-mode') as HTMLSelectElement;
+const aCloudEndpoint = document.getElementById('a-cloud-endpoint') as HTMLInputElement;
+const aCloudModel = document.getElementById('a-cloud-model') as HTMLInputElement;
+const aLocalEndpoint = document.getElementById('a-local-endpoint') as HTMLInputElement;
+const aLocalModel = document.getElementById('a-local-model') as HTMLInputElement;
+const aKey = document.getElementById('a-key') as HTMLInputElement;
+const aKeyRemove = document.getElementById('a-key-remove') as HTMLButtonElement;
+const aKeyHint = document.getElementById('a-key-hint') as HTMLElement;
+const aProbeBtn = document.getElementById('a-probe') as HTMLButtonElement;
+const aSaveBtn = document.getElementById('a-save') as HTMLButtonElement;
+const aStatus = document.getElementById('a-status') as HTMLElement;
+
 /** Текущий снимок состояния; выбранный профиль сохраняется между обновками. */
 let state: AppState | null = null;
 let selectedId: string | null = null;
 /** Действие в полёте (кнопки блокируются, чтобы не задваивать). */
 let busy = false;
+/** Пользователь запросил удаление ключа (кнопка ✕). */
+let removeKey = false;
+/** Последний прочитанный конфиг ассистента. */
+let assistantCfg: AssistantConfigView | null = null;
 
 document.addEventListener('DOMContentLoaded', () => {
   document.documentElement.dataset.theme = theme;
@@ -71,6 +94,102 @@ function bind(): void {
     if (busy || !selectedId) return;
     void apply(() => api.rotateProxy(selectedId as string));
   });
+
+  // ---------- AI-ассистент ----------
+  aProbeBtn.addEventListener('click', () => void probeAssistant());
+  aKeyRemove.addEventListener('click', () => {
+    removeKey = true;
+    aKey.value = '';
+    aKey.placeholder = 'ключ будет удалён при «Сохранить»';
+    aKeyRemove.hidden = true;
+    setAssistantStatus('err', 'Ключ будет удалён при сохранении');
+  });
+  aSaveBtn.addEventListener('click', () => void saveAssistant());
+}
+
+/** Прочитать и разложить конфиг ассистента по полям (ключ — только факт). */
+async function loadAssistantConfig(): Promise<void> {
+  try {
+    assistantCfg = await api.getAssistantConfig();
+  } catch (err) {
+    setAssistantStatus('err', `Не удалось прочитать настройки: ${String(err)}`);
+    return;
+  }
+  const cfg = assistantCfg as AssistantConfigView;
+  aMode.value = cfg.mode;
+  aCloudEndpoint.value = cfg.cloud.endpoint;
+  aCloudModel.value = cfg.cloud.model;
+  aLocalEndpoint.value = cfg.local.endpoint;
+  aLocalModel.value = cfg.local.model;
+  removeKey = false;
+  aKey.value = '';
+  aKeyRemove.hidden = !cfg.hasKey || cfg.keyFromEnv;
+  if (cfg.keyFromEnv) {
+    aKey.placeholder = 'ключ задан переменной OLLAMA_API_KEY';
+    aKeyHint.textContent = 'Ключ берётся из переменной окружения OLLAMA_API_KEY — она главнее сохранённого здесь.';
+  } else if (cfg.hasKey) {
+    aKey.placeholder = 'ключ задан — введите новый, пусто = не менять';
+    aKeyHint.textContent = 'Ключ шифруется системным хранилищем ОС и не показывается обратно. ✕ — удалить сохранённый ключ.';
+  } else {
+    aKey.placeholder = 'вставьте ключ Ollama Cloud';
+    aKeyHint.textContent = 'Ключ шифруется системным хранилищем ОС и не показывается обратно. Альтернатива — переменная окружения OLLAMA_API_KEY.';
+  }
+}
+
+/** Проверка доступности: «Cloud / Local / Недоступен». */
+async function probeAssistant(): Promise<void> {
+  if (busy) return;
+  busy = true;
+  aProbeBtn.disabled = true;
+  setAssistantStatus('ok', 'Проверяю…');
+  try {
+    const s: AssistantStatus = await api.probeAssistant();
+    if (s.ok) {
+      setAssistantStatus('ok', `Доступен: ${s.label}${s.detail ? ` (${s.detail})` : ''}`);
+    } else {
+      setAssistantStatus('err', `${s.label}: ${s.detail ?? 'провайдер не отвечает'}`);
+    }
+  } catch (err) {
+    setAssistantStatus('err', String(err));
+  } finally {
+    busy = false;
+    aProbeBtn.disabled = false;
+  }
+}
+
+/** Сохранить настройки ассистента (ключ: пусто = не трогать, ✕ = удалить). */
+async function saveAssistant(): Promise<void> {
+  if (busy) return;
+  busy = true;
+  aSaveBtn.disabled = true;
+  try {
+    const typedKey = aKey.value.trim();
+    const apiKey = removeKey ? '' : typedKey ? typedKey : undefined;
+    const res = await api.setAssistantConfig({
+      mode: aMode.value as AssistantConfigView['mode'],
+      cloud: { endpoint: aCloudEndpoint.value.trim(), model: aCloudModel.value.trim() },
+      local: { endpoint: aLocalEndpoint.value.trim(), model: aLocalModel.value.trim() },
+      apiKey,
+    });
+    if (res.ok) {
+      setAssistantStatus('ok', 'Настройки ассистента сохранены');
+      await loadAssistantConfig();
+    } else {
+      setAssistantStatus('err', res.error ?? 'Не удалось сохранить');
+    }
+  } catch (err) {
+    setAssistantStatus('err', String(err));
+  } finally {
+    busy = false;
+    aSaveBtn.disabled = false;
+  }
+}
+
+function setAssistantStatus(kind: 'ok' | 'err', text: string): void {
+  aStatus.hidden = false;
+  aStatus.classList.remove('ok', 'err');
+  aStatus.classList.add(kind);
+  aStatus.textContent = text;
 }
 
 /** Перечитать состояние и перерисовать (после действий / «Обновить»). */
@@ -87,6 +206,7 @@ async function refresh(): Promise<void> {
   busy = false;
   renderProfiles();
   renderExtensions();
+  void loadAssistantConfig();
 }
 
 /** Общий прогон действия: busy-флаг → действие → статус → перечитка списка. */

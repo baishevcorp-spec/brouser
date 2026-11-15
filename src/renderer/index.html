@@ -32,7 +32,7 @@
 
       <div class="sep" aria-hidden="true"></div>
 
-      <!-- Действия: добавить / удалить выбранный / перезагрузить все / синхронизатор / сохранить / тема / журнал -->
+      <!-- Действия: добавить / удалить выбранный / перезагрузить все / синхронизатор / сохранить / тема / журнал / ассистент / настройки -->
       <div class="group">
         <button id="btn-add" class="ibtn accent" data-icon="plus" data-tip-id="btn-add" aria-label="Добавить профиль"></button>
         <button id="btn-remove" class="ibtn danger" data-icon="trash" data-tip-id="btn-remove" aria-label="Удалить выбранный профиль" disabled></button>
@@ -41,6 +41,7 @@
         <button id="btn-save" class="ibtn" data-icon="save" data-tip-id="btn-save" aria-label="Сохранить конфиг"></button>
         <button id="btn-theme" class="ibtn" data-icon="palette" data-tip-id="btn-theme" aria-label="Сменить тему"></button>
         <button id="btn-logs" class="ibtn" data-icon="logs" data-tip-id="btn-logs" aria-label="Журнал" aria-expanded="false"></button>
+        <button id="btn-assistant" class="ibtn" data-icon="bot" data-tip-id="btn-assistant" aria-label="AI-ассистент" aria-expanded="false"></button>
         <button id="btn-settings" class="ibtn" data-icon="settings" data-tip-id="btn-settings" aria-label="Настройки"></button>
       </div>
 
@@ -69,6 +70,26 @@
 
   <!-- ===== Журнал ===== -->
   <div id="logpanel" class="glass card" hidden aria-label="Журнал событий"></div>
+
+  <!-- ===== AI-ассистент (P4, этап 1) =====
+       Правая панель с резервацией layout (ui:assistant-panel — как журнал):
+       WebContentsView её не перекрывает. История не персистится. Ответ
+       стримится событиями assistant:chunk/restart/done/error. -->
+  <aside id="assistant" class="glass card assistant" hidden aria-label="AI-ассистент Brouser">
+    <header class="assistant-head">
+      <span class="assistant-title">Ассистент</span>
+      <span id="assistant-status" class="assistant-status" data-state="probe" title="Проверяю доступность…">…</span>
+      <span class="spacer"></span>
+      <button id="assistant-clear" class="ibtn sm" data-icon="trash" data-tip-id="assistant-clear" aria-label="Очистить историю"></button>
+      <button id="assistant-collapse" class="ibtn sm" data-icon="x" data-tip-id="assistant-collapse" aria-label="Свернуть панель"></button>
+    </header>
+    <div id="assistant-messages" class="assistant-messages" aria-live="polite"></div>
+    <form id="assistant-form" class="assistant-form" autocomplete="off">
+      <textarea id="assistant-input" rows="2" maxlength="4000" placeholder="Спросите про Brouser… (Enter — отправить)" aria-label="Сообщение ассистенту"></textarea>
+      <button type="button" id="assistant-abort" class="ibtn sm danger" data-icon="x" aria-label="Остановить ответ" hidden></button>
+      <button type="submit" id="assistant-send" class="ibtn sm accent" data-icon="zap" aria-label="Отправить сообщение"></button>
+    </form>
+  </aside>
 
   <!-- ===== Тост-индикатор результата ===== -->
   <div id="toast" class="counter" hidden></div>
