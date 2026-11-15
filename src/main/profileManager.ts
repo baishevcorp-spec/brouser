@@ -19,11 +19,14 @@
  *  - сессия каждого профиля persistent (куки/кэш/LocalStorage/IndexedDB на диске).
  */
 import { app, BrowserWindow, Session, session, WebContentsView } from 'electron';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import {
   AppState,
   CommandResult,
   CookieImportInput,
   CookieImportResult,
+  ExtensionState,
   LayoutId,
   LAYOUTS,
   NewProfileInput,
@@ -51,11 +54,18 @@ interface ManagedView {
   view: WebContentsView;
   session: Session;
   proxy: ProxyInfo | null;
-  extensions: { source: string; name: string | null; ok: boolean; error: string | null }[];
+  extensions: ExtensionState[];
   /** Спецификация антидетект-отпечатка профиля (P0.1). */
   fp: FingerprintSpec;
   /** Зарегистрирован ли CDP-патч на этом webContents (сбрасывается при detach). */
   scriptAdded: boolean;
+  /**
+   * Первая отрисовка страницы состоялась (did-finish-load / did-fail-load).
+   * До этого момента CDP-отладчик к webContents НЕ прикрепляется:
+   * attach ДО первого кадра — рабочий suspect «пустой ячейки» (контент
+   * появляется, только когда DevTools отцепляет наш отладчик).
+   */
+  firstPaintDone: boolean;
   /**
    * Представление в процессе teardown (удаление профиля / закрытие окна).
    * Все отложенные и асинхронные обработчики (did-navigate, devtools-closed,
@@ -117,7 +127,7 @@ export class ProfileManager {
         proxyScheme: mv?.proxy?.scheme ?? (p.proxy ? (parseProxy(p.proxy)?.scheme ?? null) : null),
         extensions:
           mv?.extensions ??
-          (p.extensions ?? []).map((source) => ({ source, name: null, ok: true, error: null })),
+          (p.extensions ?? []).map((source) => ({ source, name: null, id: null, ok: true, error: null })),
         timezone: p.timezone || null,
         userAgentSet: !!p.userAgent,
         platform: p.platform || null,
@@ -484,6 +494,141 @@ export class ProfileManager {
     }
   }
 
+  // ------------------------------------------------------------------
+  // Управление расширениями (окно «Настройки»): добавить распакованное
+  // расширение через выбор папки / убрать — для живого профиля применяется
+  // к текущей сессии немедленно (без пересоздания ячейки).
+  // ------------------------------------------------------------------
+
+  /**
+   * Подключить профилю распакованные расширения (пути-каталоги с manifest.json).
+   * Конфиг обновляется и сохраняется; в живую сессию расширения грузятся сразу.
+   * reload=true — перезагрузить ячейку, чтобы content-скрипты новой навигации
+   * заработали (background-часть действует и без перезагрузки).
+   */
+  async addProfileExtensions(profileId: string, rawPaths: string[], reload = true): Promise<CommandResult> {
+    const profile = this.config.config.profiles.find((p) => p.id === profileId);
+    if (!profile) return { ok: false, error: 'Профиль не найден' };
+    const paths = (rawPaths ?? []).map((s) => s.trim()).filter((s) => s.length > 0);
+    if (paths.length === 0) return { ok: false, error: 'Пути не заданы' };
+
+    profile.extensions = profile.extensions ?? [];
+    const mv = this.views.get(profileId);
+    const notes: string[] = [];
+    let added = 0;
+
+    for (const source of paths) {
+      if (profile.extensions.includes(source)) {
+        notes.push(`${source}: уже подключено`);
+        continue;
+      }
+      // Валидация: это каталог и в нём лежит manifest.json.
+      const abs = this.config.resolveExtensionPath(source);
+      let valid = false;
+      try {
+        valid =
+          !!abs &&
+          fs.existsSync(abs) &&
+          fs.statSync(abs).isDirectory() &&
+          fs.existsSync(path.join(abs, 'manifest.json'));
+      } catch {
+        valid = false;
+      }
+      if (!valid) {
+        notes.push(`${source}: не каталог с manifest.json`);
+        this.log.error(`[${profileId}] расширение отклонено: ${source}`);
+        continue;
+      }
+      profile.extensions.push(source);
+      added++;
+      // Живая сессия — грузим сразу, ячейку не пересоздаём.
+      if (mv && !mv.closing) {
+        const loadPath = this.config.prepareExtensionForLoad(abs as string, this.log);
+        try {
+          const loaded = await mv.session.loadExtension(loadPath);
+          this.upsertExtension(mv, { source, name: loaded.name, id: loaded.id, ok: true, error: null });
+          this.log.info(`[${profileId}] расширение загружено в живую сессию: ${loaded.name} (${source})`);
+        } catch (err) {
+          this.upsertExtension(mv, { source, name: null, id: null, ok: false, error: String(err) });
+          notes.push(`${source}: сессия не приняла (${String(err)})`);
+          this.log.error(`[${profileId}] loadExtension(${source}) failed: ${String(err)}`);
+        }
+      }
+    }
+
+    if (added > 0) {
+      this.config.save();
+      this.notify();
+      if (reload) this.reloadView(profileId);
+    }
+    if (added === 0) return { ok: false, error: notes.join('; ') || 'Ничего не добавлено' };
+    return { ok: true, error: notes.length > 0 ? notes.join('; ') : undefined };
+  }
+
+  /**
+   * Отключить расширение профиля: убрать из конфига и выгрузить из живой
+   * сессии (session.removeExtension по id, сохранённому при загрузке).
+   * Уже внедрённые в текущую страницу content-скрипты живут до перезагрузки —
+   * reload=true обновляет ячейку сразу.
+   */
+  async removeProfileExtension(profileId: string, source: string, reload = true): Promise<CommandResult> {
+    const profile = this.config.config.profiles.find((p) => p.id === profileId);
+    if (!profile) return { ok: false, error: 'Профиль не найден' };
+    const before = (profile.extensions ?? []).length;
+    profile.extensions = (profile.extensions ?? []).filter((p) => p !== source);
+    if (profile.extensions.length === before) {
+      return { ok: false, error: 'Расширение не найдено в профиле' };
+    }
+
+    const mv = this.views.get(profileId);
+    if (mv && !mv.closing) {
+      const entry = mv.extensions.find((e) => e.source === source);
+      let removedId = entry?.id ?? null;
+      // Fallback: ищем по фактическому пути среди загруженных расширений сессии
+      // (id могли не сохранить — профиль создан до этой версии Brouser).
+      if (!removedId) {
+        const abs = this.config.resolveExtensionPath(source);
+        if (abs) {
+          const candidates = [abs, this.config.prepareExtensionForLoad(abs, this.log)].map((p) =>
+            path.resolve(p),
+          );
+          const found = mv.session
+            .getAllExtensions()
+            .find((e) => {
+              try {
+                return candidates.includes(path.resolve(e.path));
+              } catch {
+                return false;
+              }
+            });
+          removedId = found?.id ?? null;
+        }
+      }
+      if (removedId) {
+        try {
+          mv.session.removeExtension(removedId);
+          this.log.info(`[${profileId}] расширение выгружено из сессии (${source})`);
+        } catch (err) {
+          this.log.warn(`[${profileId}] removeExtension failed (${source}): ${String(err)}`);
+        }
+      }
+      mv.extensions = mv.extensions.filter((e) => e.source !== source);
+    }
+
+    this.config.save();
+    this.notify();
+    if (reload) this.reloadView(profileId);
+    return { ok: true };
+  }
+
+  /** Обновить/добавить статус расширения в живом представлении. */
+  private upsertExtension(mv: ManagedView, entry: ExtensionState): void {
+    const i = mv.extensions.findIndex((e) => e.source === entry.source);
+    if (i >= 0) mv.extensions[i] = entry;
+    else mv.extensions.push(entry);
+  }
+
+
   /** DevTools в отдельном окне, чтобы не перекрывать сетку. */
   openDevTools(id: string): void {
     const mv = this.views.get(id);
@@ -585,17 +730,17 @@ export class ProfileManager {
       for (const source of profile.extensions ?? []) {
         const abs = this.config.resolveExtensionPath(source);
         if (!abs) {
-          extensions.push({ source, name: null, ok: false, error: 'путь не найден' });
+          extensions.push({ source, name: null, id: null, ok: false, error: 'путь не найден' });
           this.log.error(`${tag} расширение не найдено: ${source}`);
           continue;
         }
         const loadPath = this.config.prepareExtensionForLoad(abs, this.log);
         try {
           const loaded = await ses.loadExtension(loadPath);
-          extensions.push({ source, name: loaded.name, ok: true, error: null });
+          extensions.push({ source, name: loaded.name, id: loaded.id, ok: true, error: null });
           this.log.info(`${tag} расширение загружено: ${loaded.name} (${source})`);
         } catch (err) {
-          extensions.push({ source, name: null, ok: false, error: String(err) });
+          extensions.push({ source, name: null, id: null, ok: false, error: String(err) });
           this.log.error(`${tag} не удалось загрузить расширение (${source}): ${String(err)}`);
         }
       }
@@ -631,7 +776,10 @@ export class ProfileManager {
       //    в дереве с нулевым прямоугольником до конца async-подготовки
       //    (bounds-опции у конструктора в Electron 33 нет; долгая жизнь
       //    в нуле — известная причина «пустой» отрисовки WebContentsView).
-      //    Финальную геометрию по актуальному contentBounds ставит positionView.
+      //    Непрозрачный фон (AARRGGBB) — вторая страховка: прозрачная
+      //    поверхность под Windows может не попасть в композитинг первого
+      //    кадра. Финальную геометрию по актуальному contentBounds ставит
+      //    positionView.
       const view = new WebContentsView({
         webPreferences: {
           session: ses,
@@ -641,9 +789,15 @@ export class ProfileManager {
       this.win.contentView.addChildView(view);
       try {
         view.setBounds(rect);
+        view.setBackgroundColor('#FF0B1518');
       } catch {
         /* окно могло закрыться параллельно */
       }
+      // «Пинок» нативному окну: resize окна на 1px и обратно — известный
+      // workaround семейства «WebContentsView пуст, пока окно не тронешь»
+      // на Windows/Electron 33: заставляет пересобрать нативное дерево
+      // дочерних поверхностей сразу после прицепления view.
+      this.bumpWindow();
 
       const mv: ManagedView = {
         profile,
@@ -653,6 +807,7 @@ export class ProfileManager {
         extensions,
         fp,
         scriptAdded: false,
+        firstPaintDone: false,
         closing: false,
       };
       this.views.set(profile.id, mv);
@@ -663,7 +818,12 @@ export class ProfileManager {
         this.log.error(`${tag} процесс страницы аварийно завершился: ${details.reason}`);
       });
       wc.on('did-fail-load', (_e, errorCode, errorDescription, failedUrl, isMainFrame) => {
-        if (isMainFrame) this.log.error(`${tag} ошибка загрузки ${failedUrl}: ${errorCode} ${errorDescription}`);
+        if (isMainFrame) {
+          this.log.error(`${tag} ошибка загрузки ${failedUrl}: ${errorCode} ${errorDescription}`);
+          // Страница ошибки — тоже «первая отрисовка»: отложенная эмуляция
+          // срабатывает и здесь, иначе CDP не прикрепится вовсе.
+          this.runEmulationAfterFirstPaint(mv);
+        }
       });
       // После каждой навигации повторно применяем таймзону/локаль/гео
       // (CDP-override'ы привязаны к процессу рендера и могут слетать при смене процесса).
@@ -673,28 +833,25 @@ export class ProfileManager {
         void this.applyNavigationEmulation(mv);
       });
 
-      // 6) Эмуляция через CDP: UA/platform, таймзона и патч отпечатка
-      //    (Page.addScriptToEvaluateOnNewDocument — до скриптов страницы).
-      await this.applyProfileEmulation(mv);
-
-      // Профиль могли удалить, пока готовилась CDP-эмуляция: webContents уже
-      // закрыт в destroyView — loadURL/позиционирование запрещены (crashpad).
-      if (mv.closing || wc.isDestroyed()) {
-        this.log.info(`${tag} профиль удалён во время создания — представление не активируется`);
-        return;
-      }
-
-      // 7) Загружаем URL (или about:blank, если не задан).
+      // 6) Загружаем URL (или about:blank, если не задан) — ПЕРЕД CDP-эмуляцией:
+      //    отладчик больше не прикрепляется до первого кадра страницы
+      //    (подозреваемый «пустых ячеек»: контент появлялся только после
+      //    открытия DevTools, которое отцепляет наш отладчик). Патч
+      //    отпечатка при этом не пропускает: его держит сессионный preload
+      //    (applyFingerprint → ses.setPreloads), а CDP-инъекция подключится
+      //    к следующим навигациям.
       const target = profile.url && profile.url.trim() ? profile.url.trim() : 'about:blank';
       wc.loadURL(target).catch((err: Error) => {
         this.log.error(`${tag} loadURL(${target}) failed: ${String(err)}`);
       });
 
-      // 7.5) «Пинок» композитору после каждой полной загрузки (в т.ч. reload):
+      // 6.5) «Пинок» композитору после каждой полной загрузки (в т.ч. reload):
       //      известная особенность WebContentsView — кадр может не дойти до
       //      поверхности окна, пока внешнее событие (resize, DevTools) не
       //      заставит пересобрать дерево. Реальный resize-цикл bounds (±1px
       //      туда-обратно, визуально не виден) гарантирует выдачу кадра.
+      //      Здесь же — первая отрисовка состоялась: теперь можно прикрепить
+      //      CDP-отладчик (эмуляция UA/таймзоны/локали/гео + CDP-патч).
       wc.on('did-finish-load', () => {
         if (mv.closing || wc.isDestroyed()) return;
         try {
@@ -705,6 +862,7 @@ export class ProfileManager {
         } catch {
           /* view мог закрыться параллельно */
         }
+        this.runEmulationAfterFirstPaint(mv);
       });
 
       // 8) Актуальная геометрия: за время подготовки сессии могли прийти
@@ -719,6 +877,44 @@ export class ProfileManager {
       this.log.error(`${tag} критическая ошибка создания представления: ${String(err)}`);
     } finally {
       this.pendingViews.delete(profile.id);
+    }
+  }
+
+  /**
+   * Первая отрисовка страницы состоялась — теперь прикрепляем CDP-отладчик
+   * (эмуляция UA/таймзоны/локали/гео + CDP-патч отпечатка).
+   * Вызывается из did-finish-load / did-fail-load(main) — кто раньше.
+   */
+  private runEmulationAfterFirstPaint(mv: ManagedView): void {
+    if (mv.firstPaintDone || mv.closing) return;
+    mv.firstPaintDone = true;
+    void this.applyProfileEmulation(mv);
+  }
+
+  /**
+   * «Пинок» нативному окну: resize на 1px и обратно (≈60мс) — известный
+   * workaround «WebContentsView пуст, пока окно не тронешь» (Win/Electron 33):
+   * пересборка нативного дерева дочерних поверхностей. Невидим, в maximized/
+   * fullscreen/minimized не делается (там resize запрещён).
+   */
+  private bumpWindow(): void {
+    const w = this.win;
+    if (!w || w.isDestroyed() || !w.isVisible()) return;
+    if (w.isMaximized() || w.isMinimized() || w.isFullScreen()) return;
+    try {
+      const b = w.getBounds();
+      w.setBounds({ x: b.x, y: b.y, width: b.width + 1, height: b.height });
+      setTimeout(() => {
+        try {
+          if (!w.isDestroyed() && !w.isMaximized() && !w.isMinimized() && !w.isFullScreen()) {
+            w.setBounds(b);
+          }
+        } catch {
+          /* ignore */
+        }
+      }, 60);
+    } catch {
+      /* ignore */
     }
   }
 
@@ -757,6 +953,14 @@ export class ProfileManager {
     if (mv.closing) return;
     const wc = mv.view.webContents;
     if (wc.isDestroyed()) return;
+
+    // Диагностический режим (BROUSER_NO_CDP=1): полностью отключить CDP-слой
+    // эмуляции — для изоляции проблем рендеринга (см. README). Патч отпечатка
+    // при этом продолжает работать через сессионный preload.
+    if (process.env.BROUSER_NO_CDP === '1') {
+      this.log.info(`[${profile.id}] CDP-эмуляция отключена (BROUSER_NO_CDP=1) — остаётся preload-патч`);
+      return;
+    }
 
     // Ссылки на webContents/debugger берём, ПОКА таргет жив: после await'ов
     // wc может быть закрыт (удаление профиля), и доступ к свойствам мёртвого
@@ -818,6 +1022,9 @@ export class ProfileManager {
   private async applyNavigationEmulation(mv: ManagedView): Promise<void> {
     const fp = mv.fp;
     if (mv.closing) return;
+    // До первой отрисовки отладчик не прицепляем (см. createView шаг 6).
+    if (!mv.firstPaintDone) return;
+    if (process.env.BROUSER_NO_CDP === '1') return;
     if (!fp.timezone && !fp.locale && !fp.geo) return;
     try {
       const wc = mv.view.webContents;

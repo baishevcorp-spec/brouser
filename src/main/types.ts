@@ -101,7 +101,7 @@ export interface ProfileState {
   hasProxy: boolean;
   /** Схема прокси для тултипа (без учётных данных). */
   proxyScheme: string | null;
-  extensions: { source: string; name: string | null; ok: boolean; error: string | null }[];
+  extensions: ExtensionState[];
   timezone: string | null;
   userAgentSet: boolean;
   platform: string | null;
@@ -227,6 +227,28 @@ export interface FilePickResult {
   content?: string;
 }
 
+/** Результат выбора каталога распакованного расширения (IPC ext:pick-dir). */
+export interface DirPickResult {
+  ok: boolean;
+  error?: string;
+  /** Абсолютный путь к каталогу с manifest.json (для индикации и вставки). */
+  path?: string;
+}
+
+/**
+ * Статус расширения профиля в списке окна «Настройки».
+ * id — идентификатор в сессии (session.loadExtension), по которому расширение
+ * выгружается (session.removeExtension); null — не загружено/ошибка.
+ */
+export interface ExtensionState {
+  /** Путь как задан в конфиге (может быть относительным). */
+  source: string;
+  name: string | null;
+  id: string | null;
+  ok: boolean;
+  error: string | null;
+}
+
 /**
  * Rich-тултип поверх сетки (UI-фикс: HTML-тултипы renderer'а перекрываются
  * WebContentsView, поэтому тултип рисуется в отдельном прозрачном
@@ -275,6 +297,28 @@ export interface CookieDialogApi {
 /** API диалога «Добавить профиль» (отдельное BrowserWindow, preload-profile-form.ts). */
 export interface ProfileFormDialogApi {
   addProfile(input: NewProfileInput): Promise<CommandResult>;
+  /** Выбор каталога распакованного расширения (системный диалог + проверка manifest.json). */
+  pickExtensionDir(): Promise<DirPickResult>;
+  closeWindow(): void;
+}
+
+/**
+ * API окна «Настройки» (отдельное BrowserWindow, preload-settings.ts):
+ * управление распакованными расширениями профилей — добавить через выбор
+ * папки, убрать, статус загрузки в сессию. Изменения применяются к живой
+ * сессии немедленно (без пересоздания ячейки).
+ */
+export interface SettingsDialogApi {
+  /** Снимок состояния (профили + статусы их расширений + тема). */
+  getState(): Promise<AppState>;
+  /** Системный диалог выбора каталога расширения (проверка manifest.json в main). */
+  pickExtensionDir(): Promise<DirPickResult>;
+  /** Подключить расширения профилю (пути-каталоги); reload — перезагрузить ячейку. */
+  addExtensions(profileId: string, paths: string[], reload: boolean): Promise<CommandResult>;
+  /** Отключить расширение профиля (конфиг + живая сессия); reload — перезагрузить ячейку. */
+  removeExtension(profileId: string, source: string, reload: boolean): Promise<CommandResult>;
+  /** Перечитать состояние (после изменений в главном окне). */
+  reloadProfile(profileId: string): Promise<void>;
   closeWindow(): void;
 }
 
@@ -329,6 +373,8 @@ export interface BrouserApi {
   openProfileForm(): Promise<CommandResult>;
   /** Диалог подтверждения удаления профиля в отдельном окне. */
   openDeleteConfirm(profileId: string): Promise<CommandResult>;
+  /** Окно «Настройки»: управление расширениями профилей. */
+  openSettings(): Promise<CommandResult>;
 
   /**
    * Показать rich-тултип (title + body) в прозрачном always-on-top окне над
