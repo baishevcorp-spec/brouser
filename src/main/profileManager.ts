@@ -627,6 +627,11 @@ export class ProfileManager {
       if (!this.win || this.win.isDestroyed()) return;
 
       // 5) Само представление. backgroundThrottling: false — страницы живут в фоне.
+      //    Прямоугольник ставится СРАЗУ после прицепления: не оставляем view
+      //    в дереве с нулевым прямоугольником до конца async-подготовки
+      //    (bounds-опции у конструктора в Electron 33 нет; долгая жизнь
+      //    в нуле — известная причина «пустой» отрисовки WebContentsView).
+      //    Финальную геометрию по актуальному contentBounds ставит positionView.
       const view = new WebContentsView({
         webPreferences: {
           session: ses,
@@ -634,6 +639,11 @@ export class ProfileManager {
         },
       });
       this.win.contentView.addChildView(view);
+      try {
+        view.setBounds(rect);
+      } catch {
+        /* окно могло закрыться параллельно */
+      }
 
       const mv: ManagedView = {
         profile,
@@ -678,6 +688,23 @@ export class ProfileManager {
       const target = profile.url && profile.url.trim() ? profile.url.trim() : 'about:blank';
       wc.loadURL(target).catch((err: Error) => {
         this.log.error(`${tag} loadURL(${target}) failed: ${String(err)}`);
+      });
+
+      // 7.5) «Пинок» композитору после каждой полной загрузки (в т.ч. reload):
+      //      известная особенность WebContentsView — кадр может не дойти до
+      //      поверхности окна, пока внешнее событие (resize, DevTools) не
+      //      заставит пересобрать дерево. Реальный resize-цикл bounds (±1px
+      //      туда-обратно, визуально не виден) гарантирует выдачу кадра.
+      wc.on('did-finish-load', () => {
+        if (mv.closing || wc.isDestroyed()) return;
+        try {
+          this.positionView(profile.id, rect);
+          const b = mv.view.getBounds();
+          mv.view.setBounds({ x: b.x, y: b.y, width: b.width + 1, height: b.height });
+          mv.view.setBounds(b);
+        } catch {
+          /* view мог закрыться параллельно */
+        }
       });
 
       // 8) Актуальная геометрия: за время подготовки сессии могли прийти

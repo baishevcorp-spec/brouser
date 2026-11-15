@@ -48,6 +48,18 @@ function bootstrap(): void {
   // Avito WebRTC не использует, а утечка IP дороже.
   app.commandLine.appendSwitch('force-webrtc-ip-handling-policy', 'disable_non_proxied_udp');
 
+  // Windows: отключаем нативный расчёт перекрытия окон (occlusion tracking).
+  // Главное окно Brouser frameless, а поверх него живут always-on-top окно
+  // тултипов и фреймовые диалоги — Chromium периодически ошибочно помечает
+  // главное окно «перекрытым» и замораживает выдачу кадров: ВСЕ
+  // WebContentsView перестают отрисовываться (содержимое ячеек не
+  // появляется — ни после reload, ни в новых ячейках — пока не открыть
+  // DevTools, что форсирует производство кадров). Для Brouser это
+  // неприемлемо по определению: фоновые ячейки обязаны оставаться «живыми»
+  // (P1.3, backgroundThrottling: false) — платим честным рендерингом под
+  // окнами вместо замороженной сетки.
+  app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
+
   let win: BrowserWindow | null = null;
   let logger: Logger | null = null;
   let config: ConfigService | null = null;
