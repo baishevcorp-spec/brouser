@@ -9,7 +9,10 @@
  *  2. карточка assistant:tool между пузырями; done-событие;
  *  3. fallback-парсер: tool call сырым JSON в content → исполнение +
  *     лог '[assistant] fallback-parser: parsed tool from content, name=…';
- *  4. меняющий тул (set_layout) реально вызывает manager.setLayout.
+ *  4. меняющий тул (set_layout) реально вызывает manager.setLayout,
+ *     к результату role:'tool' добавлена приписка «не дублируй карточку»;
+ *  5. log_tail скрывает строки [assistant] (фикс обратной связи) —
+ *     ни в тексте для модели, ни в карточке UI.
  *
  * Запуск: node tests/integration-stage2.cjs (после npm run build).
  */
@@ -142,10 +145,22 @@ const manager = {
   },
 };
 const logLines = [];
+// Кольцевой буфер журнала (как у реального Logger): смесь строк профилей,
+// общих строк приложения и внутренних строк [assistant] — фикс должен
+// показать модели и карточке только первые два вида.
+const logEntries = [
+  { time: Date.now() - 60000, level: 'info', message: '[assistant] chat started (len=17)' },
+  { time: Date.now() - 50000, level: 'warn', message: '[avito1] расширение загрузилось с предупреждением' },
+  { time: Date.now() - 40000, level: 'info', message: '[assistant] тул list_profiles: готово' },
+  { time: Date.now() - 30000, level: 'error', message: '[avito1] страница не ответила (net::ERR_TIMED_OUT)' },
+  { time: Date.now() - 20000, level: 'info', message: '[assistant] ответ готов: провайдер=local' },
+  { time: Date.now() - 10000, level: 'info', message: 'приложение запущено' },
+];
 const logger = {
   info: (m) => logLines.push(`[info] ${m}`),
   warn: (m) => logLines.push(`[warn] ${m}`),
   error: (m) => logLines.push(`[error] ${m}`),
+  getRecent: (n) => logEntries.slice(-n),
 };
 const events = [];
 const win = {
@@ -249,6 +264,51 @@ async function scenario3() {
   const round2 = serverRequests[1];
   const toolMsg = round2 && round2.messages.find((m) => m.role === 'tool' && m.tool_name === 'set_layout');
   check('результат set_layout ушёл модели', toolMsg && toolMsg.content.includes('раскладка изменена'), toolMsg && toolMsg.content);
+  // Механическое подкрепление правила 4: приписка «не дублируй карточку».
+  check(
+    'приписка «одно слово» прилагается',
+    toolMsg && toolMsg.content.includes('ответь ровно одним словом'),
+    toolMsg && toolMsg.content,
+  );
+}
+
+async function scenario4() {
+  console.log('\n=== Сценарий 4: log_tail скрывает [assistant] (фикс обратной связи) ===');
+  // Прямой вызов реестра — общий журнал без фильтра профиля.
+  {
+    const r = await tools.execute('log_tail', {});
+    check('log_tail общий: ok', r.ok === true, r);
+    check('log_tail общий: без строк [assistant]', !r.text.includes('[assistant]'), r.text);
+    check('log_tail общий: строки браузера/профилей видны', r.text.includes('приложение запущено') && r.text.includes('[avito1]'), r.text);
+    check('log_tail общий: карточка без [assistant]', !JSON.stringify(r.lines).includes('[assistant]'), r.lines);
+    check('log_tail общий: карточка компактная (≤ 100 символов строка)', r.lines.every((l) => l.length <= 100), r.lines);
+  }
+  // Полный цикл через ассистента: профильный журнал + карточка в UI.
+  events.length = 0;
+  serverRequests.length = 0;
+  setScript([
+    turnToolCall('Читаю журнал профиля avito1.', 'log_tail', { profileName: 'avito1' }),
+    turnText('Вот последние записи.'),
+  ]);
+  const res = await assistant.send('Покажи логи avito1');
+  check('send ok', res.ok, res);
+  const toolEvents = events.filter((e) => e.channel === 'assistant:tool');
+  check('карточка log_tail', toolEvents.length === 1 && toolEvents[0].payload.name === 'log_tail', toolEvents.map((e) => e.payload));
+  const card = toolEvents[0] ? toolEvents[0].payload : null;
+  check('карточка без [assistant]', card && !JSON.stringify(card.lines).includes('[assistant]'), card && card.lines);
+  const round2 = serverRequests[1];
+  const toolMsg = round2 && round2.messages.find((m) => m.role === 'tool' && m.tool_name === 'log_tail');
+  check('текст тула без [assistant]', toolMsg && !toolMsg.content.includes('[assistant]'), toolMsg && toolMsg.content);
+  check(
+    'строки профиля видны модели',
+    toolMsg && toolMsg.content.includes('net::ERR_TIMED_OUT') && toolMsg.content.includes('расширение загрузилось'),
+    toolMsg && toolMsg.content,
+  );
+  check(
+    'общий контекст — без [assistant] и без строк профиля',
+    toolMsg && toolMsg.content.includes('приложение запущено') && !toolMsg.content.includes('ответ готов'),
+    toolMsg && toolMsg.content,
+  );
 }
 
 async function main() {
@@ -257,6 +317,7 @@ async function main() {
     await scenario1();
     await scenario2();
     await scenario3();
+    await scenario4();
   } finally {
     server.close();
   }

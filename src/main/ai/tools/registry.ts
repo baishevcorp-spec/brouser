@@ -13,6 +13,10 @@
  *     ассистент захлёбывается контекстом и галлюцинирует; этап 3 —
  *     построчный кламп 150 символов внутри log_tail (30 × 150 = 4,5 КБ),
  *     глобальный кламп остаётся страховкой для остальных тулов;
+ *   - log_tail скрывает строки [assistant] (внутренние логи самого LLM —
+ *     фикс обратной связи): модель не должна видеть собственные сбои,
+ *     зацикливаться на их разборе и тратить бюджет строк на них — ни в
+ *     тексте для модели, ни в карточке UI их не существует;
  *   - profile_details отдаёт хост прокси, но НЕ креды; config.json
  *     целиком, cookies/пароли/ключи — не существуют для тулов;
  *   - UI получает карточку (title + ≤ 6 коротких строк), не JSON.
@@ -73,6 +77,10 @@ export interface ToolResult {
   title: string;
   /** Строки карточки (≤ 6). */
   lines: string[];
+  /** Тул меняет состояние: агентский цикл добавит к результату приписку
+   *  «карточка уже показана — не дублируй» (правило 4, механическое
+   *  подкрепление против дублей ответа после тулов). */
+  mutating?: boolean;
 }
 
 interface ToolDef {
@@ -358,17 +366,25 @@ function buildDefs(): ToolDef[] {
     {
       name: 'log_tail',
       description:
-        'Хвост журнала: последние записи (по умолчанию 30, максимум 50), строки ≤ 150 символов; profileName — записи профиля + 5 общих строк контекста; level — фильтр по уровню',
+        'Хвост журнала браузера/профилей: последние записи (по умолчанию 30, максимум 50), строки ≤ 150 символов; profileName — записи профиля + 5 общих строк контекста; level — фильтр по уровню; внутренние строки [assistant] (логи самого ассистента) всегда скрыты',
       schema: logTailSchema,
       run: (args, ctx) => {
         const lines = Number(args.lines ?? 30);
         const level = (args.level ?? 'all') as 'all' | 'info' | 'warn' | 'error';
-        const all = ctx.log.getRecent(300);
+        // Фикс обратной связи: строки [assistant] — внутренние логи самого
+        // ассистента (жизненный цикл LLM, тулов, конфига). Модель не должна
+        // видеть собственные ошибки и зацикливаться на их разборе, поэтому
+        // они не отдаются ни в текст для модели, ни в карточку UI. Фильтр
+        // стоит ДО level-фильтра и срезов, чтобы бюджет строк (30) тратился
+        // только на записи браузера/профилей.
+        const all = ctx.log.getRecent(300).filter((e) => !e.message.includes('[assistant]'));
         const filtered = level === 'all' ? all : all.filter((e) => e.level === level);
         // Кламп построчно и ДО склейки (этап 3): 30 × 150 = 4,5 КБ — с запасом
         // под общий лимит 8 КБ; глобальный кламп остаётся страховкой.
-        const fmt = (e: LogEntry): string =>
-          `[${hhmmss(e.time)}] ${e.level.toUpperCase().padEnd(5)} ${e.message.slice(0, 150)}`;
+        // Второй параметр — длина строки для карточки UI (короче: полный
+        // текст нужен только модели).
+        const fmt = (e: LogEntry, max = 150): string =>
+          `[${hhmmss(e.time)}] ${e.level.toUpperCase().padEnd(5)} ${e.message.slice(0, max)}`;
         const counts = (entries: LogEntry[]): string => {
           const c: Record<string, number> = { info: 0, warn: 0, error: 0 };
           for (const e of entries) c[e.level] = (c[e.level] ?? 0) + 1;
@@ -389,31 +405,33 @@ function buildDefs(): ToolDef[] {
             parts.push(`записей профиля ${res.profile.name} в последних 300 нет (искали тег ${tag})`);
           } else {
             parts.push(`профиль ${res.profile.name}: последние ${own.length} записей (${counts(own)}):`);
-            parts.push(...own.map(fmt));
+            // (e) => fmt(e), а не просто fmt: у fmt есть второй параметр (длина),
+            // и map передал бы в него индекс элемента.
+            parts.push(...own.map((e) => fmt(e)));
           }
           if (general.length > 0) {
             parts.push(`— общий контекст (последние ${general.length} строк без фильтра профиля):`);
-            parts.push(...general.map(fmt));
+            parts.push(...general.map((e) => fmt(e)));
           }
           return {
             ok: true,
             text: parts.join('\n'),
             title: `Журнал ${res.profile.name}: ${own.length}`,
-            lines: own.slice(-3).map(fmt),
+            lines: own.slice(-3).map((e) => fmt(e, 100)),
           };
         }
 
         const take = filtered.slice(-lines);
         if (take.length === 0) {
-          return { ok: true, text: 'журнал пуст (по этому фильтру записей нет)', title: 'Журнал: пусто', lines: [] };
+          const empty = 'журнал пуст (по этому фильтру записей нет; строки [assistant] — логи ассистента — в выдачу не попадают в принципе)';
+          return { ok: true, text: empty, title: 'Журнал: пусто', lines: [] };
         }
         const header = `последние ${take.length} записей (${counts(take)}):`;
-        const body = take.map(fmt);
         return {
           ok: true,
-          text: clamp([header, ...body].join('\n')),
+          text: clamp([header, ...take.map((e) => fmt(e))].join('\n')),
           title: `Журнал: ${take.length} записей`,
-          lines: body.slice(-3),
+          lines: take.slice(-3).map((e) => fmt(e, 100)),
         };
       },
     },
@@ -527,16 +545,16 @@ export class ToolRegistry {
       args = def.schema.parse(rawArgs ?? {}) as Record<string, unknown>;
     } catch (err) {
       this.ctx.log.warn(`[assistant] тул ${name}: ${zodError(err)}`);
-      return { ok: false, text: zodError(err), title: name, lines: [zodError(err)] };
+      return { ok: false, text: zodError(err), title: name, lines: [zodError(err)], mutating: def.mutating };
     }
     try {
       const res = await withTimeout(Promise.resolve(def.run(args, this.ctx)), name);
       this.ctx.log.info(`[assistant] тул ${name}: ${res.ok ? 'готово' : 'отказ'}`);
-      return { ...res, text: clamp(res.text), lines: res.lines.slice(0, CARD_LINES_MAX) };
+      return { ...res, text: clamp(res.text), lines: res.lines.slice(0, CARD_LINES_MAX), mutating: def.mutating };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       this.ctx.log.error(`[assistant] тул ${name} упал: ${msg}`);
-      return { ok: false, text: `ошибка исполнения: ${msg}`, title: name, lines: [`ошибка: ${msg}`] };
+      return { ok: false, text: `ошибка исполнения: ${msg}`, title: name, lines: [`ошибка: ${msg}`], mutating: def.mutating };
     }
   }
 }

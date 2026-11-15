@@ -93,5 +93,28 @@ check('resolve: active без выделения → отказ', !resolveProfil
   check('zod: пустой запрос отвергается', threw);
 }
 
+// --- системный промпт: версия 4 (фиксы обратной связи: правило 11, правило 4) ---
+{
+  const { SYSTEM_PROMPT_VERSION, buildSystemPrompt } = require('../dist/main/ai/system-prompt');
+  check('prompt: версия поднята до 4', SYSTEM_PROMPT_VERSION === 4);
+  const prompt = buildSystemPrompt({
+    state: { profiles: [], layout: '1x1', inputSync: false },
+    activeProfileId: null,
+    appVersion: '1.0.0-test',
+    electronVersion: '33.4.11',
+    chromiumVersion: '120',
+    platform: 'linux x64',
+    toolLines: ['- test — тестовый тул'],
+  });
+  check(
+    'prompt: правило 11 обязывает search_faq',
+    prompt.includes('11.') && prompt.includes('ОБЯЗАН сначала вызвать тул search_faq'),
+  );
+  check('prompt: правило 11 запрещает выдумывать', prompt.includes('НИКОГДА не выдумывай шаги, кнопки или настройки'));
+  check('prompt: правило 4 — одно слово после успеха', prompt.includes('ИЗ ОДНОГО СЛОВА'));
+  check('prompt: правило 4 — запрет дублей карточки', prompt.includes('КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО дублировать'));
+  check('prompt: 11 правил в структуре', prompt.includes('11. КРИТИЧЕСКОЕ ПРАВИЛО ПОИСКА'));
+}
+
 console.log(failures === 0 ? '\nSMOKE: все проверки пройдены' : `\nSMOKE: провалено ${failures}`);
 process.exit(failures === 0 ? 0 : 1);
