@@ -21,6 +21,8 @@ const extListEl = document.getElementById('s-ext-list') as HTMLElement;
 const addBtn = document.getElementById('s-add') as HTMLButtonElement;
 const reloadEl = document.getElementById('s-reload') as HTMLInputElement;
 const statusEl = document.getElementById('s-status') as HTMLElement;
+const rotationInfoEl = document.getElementById('s-rotation-info') as HTMLElement;
+const rotateBtn = document.getElementById('s-rotate') as HTMLButtonElement;
 
 /** Текущий снимок состояния; выбранный профиль сохраняется между обновками. */
 let state: AppState | null = null;
@@ -62,6 +64,12 @@ function bind(): void {
     if (!btn || busy || !selectedId) return;
     const source = btn.dataset.remove as string;
     void apply(() => api.removeExtension(selectedId as string, source, reloadEl.checked));
+  });
+
+  // Ротация мобильного прокси (P3): ручная смена IP выбранного профиля.
+  rotateBtn.addEventListener('click', () => {
+    if (busy || !selectedId) return;
+    void apply(() => api.rotateProxy(selectedId as string));
   });
 }
 
@@ -129,6 +137,7 @@ function renderExtensions(): void {
   if (!state) return;
   const profile: ProfileState | undefined = state.profiles.find((p) => p.id === selectedId);
   extListEl.innerHTML = '';
+  renderRotation(profile);
   if (!profile) {
     const empty = document.createElement('div');
     empty.className = 'hint';
@@ -161,6 +170,15 @@ function renderExtensions(): void {
     badge.title = ext.ok ? `Загружено в сессию${ext.name ? `: ${ext.name}` : ''}` : String(ext.error ?? '');
     row.appendChild(badge);
 
+    // P3: предупреждение совместимости (MV3 service_worker — Electron 33).
+    if (ext.note) {
+      const note = document.createElement('span');
+      note.className = 'badge warn';
+      note.textContent = '⚠ MV3';
+      note.title = ext.note;
+      row.appendChild(note);
+    }
+
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'ibtn sm danger';
@@ -172,6 +190,28 @@ function renderExtensions(): void {
     extListEl.appendChild(row);
   }
   mountIcons(extListEl);
+}
+
+/** Ротация мобильного прокси выбранного профиля: строка статуса + доступность кнопки. */
+function renderRotation(profile: ProfileState | undefined): void {
+  if (!profile) {
+    rotationInfoEl.textContent = '—';
+    rotateBtn.disabled = true;
+    return;
+  }
+  const rot = profile.proxyRotation;
+  if (!profile.hasProxy) {
+    rotationInfoEl.textContent = 'у профиля нет прокси — ротация не настроена';
+    rotateBtn.disabled = true;
+    return;
+  }
+  rotateBtn.disabled = false;
+  if (rot) {
+    const sched = rot.intervalMin > 0 ? `каждые ${rot.intervalMin} мин` : 'только вручную';
+    rotationInfoEl.textContent = `${sched}${rot.hasUrl ? ' • URL провайдера задан' : ''}`;
+  } else {
+    rotationInfoEl.textContent = 'авто-смена выключена — включается в config.json (proxyRotation)';
+  }
 }
 
 function setStatus(kind: 'ok' | 'err', text: string): void {

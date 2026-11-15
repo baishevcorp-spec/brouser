@@ -41,6 +41,8 @@ const api: BrouserApi = {
   addProfile: (input) => ipcRenderer.invoke('profile:add', input),
   removeProfile: (id) => ipcRenderer.invoke('profile:remove', id),
   duplicateProfile: (id) => ipcRenderer.invoke('profile:duplicate', id),
+  // Drag-and-drop: переставить профиль в другую ячейку (сдвиг в config.profiles).
+  reorderProfiles: (fromId, toIndex) => ipcRenderer.invoke('grid:reorder', fromId, toIndex),
   importCookies: (profileId, input) => ipcRenderer.invoke('cookies:import', profileId, input),
   pickCookieFile: () => ipcRenderer.invoke('cookies:pick-file'),
   setInputSync: (enabled) => ipcRenderer.invoke('sync:set', enabled),

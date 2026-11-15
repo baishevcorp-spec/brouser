@@ -18,6 +18,8 @@ const fProxy = document.getElementById('f-proxy') as HTMLInputElement;
 const fExt = document.getElementById('f-ext') as HTMLTextAreaElement;
 const fUa = document.getElementById('f-ua') as HTMLInputElement;
 const fTz = document.getElementById('f-tz') as HTMLInputElement;
+const fRotation = document.getElementById('f-rotation') as HTMLInputElement;
+const fRotationUrl = document.getElementById('f-rotation-url') as HTMLInputElement;
 const statusEl = document.getElementById('pf-status') as HTMLElement;
 const saveBtn = document.getElementById('pf-save') as HTMLButtonElement;
 
@@ -51,6 +53,8 @@ document.addEventListener('DOMContentLoaded', () => {
       name: fName.value.trim(),
       url: fUrl.value.trim(),
       proxy: fProxy.value.trim(),
+      rotationIntervalMin: fRotation.value.trim(),
+      rotationUrl: fRotationUrl.value.trim(),
       extensions: fExt.value,
       userAgent: fUa.value.trim(),
       timezone: fTz.value.trim(),

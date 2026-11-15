@@ -32,6 +32,7 @@ import {
   NewProfileInput,
   ProfileConfig,
   ProfileState,
+  ProxyRotationConfig,
   ThemeId,
 } from './types';
 import { ConfigService, normalizeUrlInput } from './config';
@@ -94,6 +95,8 @@ export class ProfileManager {
   private logPanelOpen = false;
   /** Синхронизатор действий (P3): реплей ввода между видимыми ячейками. */
   private inputSync: InputSync;
+  /** Таймеры автосмены IP (P3: ротация мобильного прокси), ключ — id профиля. */
+  private rotationTimers = new Map<string, ReturnType<typeof setInterval>>();
 
   constructor(private config: ConfigService, private log: Logger) {
     // Инициализация ДО подписок: inputSync нуждается в логгере.
@@ -127,13 +130,16 @@ export class ProfileManager {
         proxyScheme: mv?.proxy?.scheme ?? (p.proxy ? (parseProxy(p.proxy)?.scheme ?? null) : null),
         extensions:
           mv?.extensions ??
-          (p.extensions ?? []).map((source) => ({ source, name: null, id: null, ok: true, error: null })),
+          (p.extensions ?? []).map((source) => ({ source, name: null, id: null, ok: true, error: null, note: null })),
         timezone: p.timezone || null,
         userAgentSet: !!p.userAgent,
         platform: p.platform || null,
         hardwareConcurrency: p.hardwareConcurrency ?? null,
         fingerprintSeed: p.fingerprintSeed ?? null,
         locale: p.locale || null,
+        proxyRotation: p.proxyRotation
+          ? { intervalMin: p.proxyRotation.intervalMin, hasUrl: !!p.proxyRotation.rotationUrl }
+          : null,
         visible: i < capacity,
       };
     });
@@ -219,11 +225,13 @@ export class ProfileManager {
   async addProfile(input: NewProfileInput): Promise<CommandResult> {
     const name = (input.name || '').trim();
     if (!name) return { ok: false, error: 'Имя профиля обязательно' };
+    const rotation = parseRotationInput(input.rotationIntervalMin, input.rotationUrl);
     const profile: ProfileConfig = {
       id: this.config.generateProfileId(name),
       name,
       url: normalizeUrlInput(input.url || ''),
       proxy: (input.proxy || '').trim(),
+      proxyRotation: rotation,
       extensions: splitPaths(input.extensions || ''),
       userAgent: (input.userAgent || '').trim(),
       timezone: (input.timezone || '').trim(),
@@ -233,6 +241,7 @@ export class ProfileManager {
     this.config.config.profiles.push(profile);
     this.config.save();
     this.log.info(`профиль добавлен: ${profile.id} (${profile.name})`);
+    if (rotation) this.ensureRotationTimer(profile);
     this.notify();
     // Если профиль попал в первые N ячеек — создать для него представление.
     this.recomputeLayout();
@@ -250,6 +259,7 @@ export class ProfileManager {
     // Preload-файл отпечатка (userData/fingerprint-preloads/<id>.js) больше
     // не нужен — удаляем, иначе в userData копится мёртвый мусор.
     if (victim) removeFingerprintPreload(victim, this.log);
+    this.stopRotationTimer(id);
     this.destroyView(id);
     this.log.info(`профиль удалён: ${id}`);
     this.notify();
@@ -261,7 +271,8 @@ export class ProfileManager {
 
   /**
    * Дублирование профиля (P3): копируются URL, прокси, расширения, UA,
-   * таймзона, платформа, hardwareConcurrency, локаль и геолокация. НЕ копируются:
+   * таймзона, платформа, hardwareConcurrency, локаль, геолокация и расписание
+   * ротации прокси. НЕ копируются:
    *   - id — новый (generateProfileId), т.е. отдельная persistent-сессия;
    *   - fingerprintSeed — новый id -> свой авто-seed -> ДРУГОЙ стабильный
    *     отпечаток (клоны не должны светить одинаково для антифрода),
@@ -276,6 +287,9 @@ export class ProfileManager {
       name: `${src.name} (копия)`,
       url: src.url,
       proxy: src.proxy,
+      proxyRotation: src.proxyRotation
+        ? { intervalMin: src.proxyRotation.intervalMin, rotationUrl: src.proxyRotation.rotationUrl }
+        : undefined,
       extensions: [...(src.extensions ?? [])],
       userAgent: src.userAgent,
       timezone: src.timezone,
@@ -289,9 +303,37 @@ export class ProfileManager {
     this.config.config.profiles.push(copy);
     this.config.save();
     this.log.info(`профиль дублирован: ${src.id} -> ${copy.id} (${copy.name})`);
+    if (copy.proxyRotation) this.ensureRotationTimer(copy);
     this.notify();
     // Новый профиль попадает в сетку, если есть свободная ячейка,
     // иначе будет создан при смене раскладки (правила жизни профилей).
+    this.recomputeLayout();
+    return { ok: true };
+  }
+
+  /**
+   * Drag-and-drop (P3): переставить профиль в другую ячейку.
+   * Массив config.profiles — плотный (профили занимают ячейки 0..n-1 по
+   * порядку), поэтому «перетащить в ячейку» = вырезать профиль и вставить
+   * на целевой индекс; для соседних ячеек это выглядит как swap, для дальних
+   * — со сдвигом остальных. Представления НЕ пересоздаются: recomputeLayout
+   * переносит живые view по новым местам (сессии/логины/вкладки сохраняются).
+   * toIndex за пределами массива (drop на пустую ячейку) — вставка в конец.
+   */
+  async reorderProfiles(fromId: string, toIndex: number): Promise<CommandResult> {
+    const profiles = this.config.config.profiles;
+    const from = profiles.findIndex((p) => p.id === fromId);
+    if (from === -1) return { ok: false, error: 'Профиль не найден' };
+    const n = profiles.length;
+    if (n < 2) return { ok: true }; // переставлять нечего
+    const to = Math.min(Math.max(0, Math.floor(toIndex || 0)), n - 1);
+    if (from === to) return { ok: true };
+    const [moved] = profiles.splice(from, 1);
+    profiles.splice(to, 0, moved as ProfileConfig);
+    this.config.save();
+    this.log.info(`профиль переставлен в ячейку ${to + 1}: ${moved?.name}`);
+    this.notify();
+    // Живые представления переезжают на новые места (parked — остаются parked).
     this.recomputeLayout();
     return { ok: true };
   }
@@ -423,6 +465,110 @@ export class ProfileManager {
   }
 
   // ------------------------------------------------------------------
+  // Ротация мобильного прокси (P3): смена IP по расписанию/триггеру
+  // ------------------------------------------------------------------
+
+  /**
+   * Запустить расписания ротации всех профилей конфига. Вызывается один раз
+   * из index.ts после registerIpc; добавление/дублирование профиля включает
+   * его расписание точечно (ensureRotationTimer), удаление — гасит.
+   */
+  startProxyRotation(): void {
+    for (const p of this.config.config.profiles) this.ensureRotationTimer(p);
+  }
+
+  /** Ручная смена IP (триггер): «Сменить IP сейчас» в окне «Настройки». */
+  async rotateProxyNow(profileId: string): Promise<CommandResult> {
+    const profile = this.config.config.profiles.find((p) => p.id === profileId);
+    if (!profile) return { ok: false, error: 'Профиль не найден' };
+    if (!profile.proxy || !profile.proxy.trim()) {
+      return { ok: false, error: 'У профиля нет прокси — ротация не имеет смысла' };
+    }
+    const summary = await this.performRotation(profile);
+    this.log.info(`[${profileId}] ротация IP вручную: ${summary}`);
+    // Перезапуск таймера: следующая автосмена — через полный интервал.
+    this.ensureRotationTimer(profile);
+    return { ok: true };
+  }
+
+  /** (Пере)создать таймер автосмены IP профиля; intervalMin <= 0 — погасить. */
+  private ensureRotationTimer(profile: ProfileConfig): void {
+    this.stopRotationTimer(profile.id);
+    const interval = profile.proxyRotation?.intervalMin ?? 0;
+    if (interval < 1) return;
+    const pid = profile.id;
+    const tag = `[${pid}]`;
+    const timer = setInterval(() => {
+      const p = this.config.config.profiles.find((x) => x.id === pid);
+      if (!p) {
+        // Профиль удалили (или конфиг перечитан) — таймер гаснет сам.
+        this.stopRotationTimer(pid);
+        return;
+      }
+      void this.performRotation(p).then((summary) => {
+        this.log.info(`${tag} плановая ротация IP (каждые ${interval} мин): ${summary}`);
+      });
+    }, interval * 60_000);
+    this.rotationTimers.set(pid, timer);
+    this.log.info(
+      `${tag} ротация IP каждые ${interval} мин${profile.proxyRotation?.rotationUrl ? ' + URL провайдера' : ''}`,
+    );
+  }
+
+  private stopRotationTimer(id: string): void {
+    const t = this.rotationTimers.get(id);
+    if (t !== undefined) {
+      clearInterval(t);
+      this.rotationTimers.delete(id);
+    }
+  }
+
+  /**
+   * Один цикл ротации IP (и для плановой, и для ручной):
+   *  1) GET rotationUrl провайдера («сменить IP»), если задан — GSM-провайдер
+   *     выдаёт новый IP endpoint'у мобильного прокси;
+   *  2) перевзвод сессии профиля на те же proxyRules: Chromium рвёт текущие
+   *     соединения, новые пойдут через (уже другой) IP.
+   * Работает и без живого представления: сессия поднимается с диска по
+   * partition, setProxy применяется к хранилищу профиля. Креды прокси не
+   * участвуют (их держит app('login')). Гео-эмуляция (таймзона/локаль/
+   * координаты/языки) не трогается — «с сохранением гео»: регион остаётся
+   * тем же, что критично для антифрода мобильных операторов.
+   */
+  private async performRotation(profile: ProfileConfig): Promise<string> {
+    const tag = `[${profile.id}]`;
+    const notes: string[] = [];
+
+    const url = profile.proxyRotation?.rotationUrl;
+    if (url) {
+      try {
+        const res = await fetch(url, { redirect: 'follow', signal: AbortSignal.timeout(20_000) });
+        notes.push(`провайдер HTTP ${res.status}`);
+        if (!res.ok) notes.push('проверьте rotationUrl');
+      } catch (err) {
+        const reason = err instanceof Error ? err.name : String(err);
+        notes.push(`провайдер недоступен (${reason})`);
+        this.log.warn(`${tag} rotationUrl не отвечает: ${reason}`);
+      }
+    }
+
+    const proxy = profile.proxy ? parseProxy(profile.proxy) : null;
+    if (proxy?.rules) {
+      try {
+        const ses = session.fromPartition(`persist:profile-${profile.id}`);
+        await ses.setProxy({ proxyRules: proxy.rules });
+        notes.push('сессия переподключена к прокси');
+      } catch (err) {
+        notes.push(`setProxy не удался: ${String(err)}`);
+        this.log.error(`${tag} setProxy при ротации: ${String(err)}`);
+      }
+    } else {
+      notes.push('строка прокси не разбирается — соединение осталось прямым');
+    }
+    return notes.join(', ');
+  }
+
+  // ------------------------------------------------------------------
   // Синхронизатор действий (P3)
   // ------------------------------------------------------------------
 
@@ -544,12 +690,14 @@ export class ProfileManager {
       // Живая сессия — грузим сразу, ячейку не пересоздаём.
       if (mv && !mv.closing) {
         const loadPath = this.config.prepareExtensionForLoad(abs as string, this.log);
+        const note = extensionManifestNote(abs as string);
+        if (note) this.log.warn(`[${profileId}] ${note} (${source})`);
         try {
           const loaded = await mv.session.loadExtension(loadPath);
-          this.upsertExtension(mv, { source, name: loaded.name, id: loaded.id, ok: true, error: null });
+          this.upsertExtension(mv, { source, name: loaded.name, id: loaded.id, ok: true, error: null, note });
           this.log.info(`[${profileId}] расширение загружено в живую сессию: ${loaded.name} (${source})`);
         } catch (err) {
-          this.upsertExtension(mv, { source, name: null, id: null, ok: false, error: String(err) });
+          this.upsertExtension(mv, { source, name: null, id: null, ok: false, error: String(err), note });
           notes.push(`${source}: сессия не приняла (${String(err)})`);
           this.log.error(`[${profileId}] loadExtension(${source}) failed: ${String(err)}`);
         }
@@ -730,17 +878,21 @@ export class ProfileManager {
       for (const source of profile.extensions ?? []) {
         const abs = this.config.resolveExtensionPath(source);
         if (!abs) {
-          extensions.push({ source, name: null, id: null, ok: false, error: 'путь не найден' });
+          extensions.push({ source, name: null, id: null, ok: false, error: 'путь не найден', note: null });
           this.log.error(`${tag} расширение не найдено: ${source}`);
           continue;
         }
         const loadPath = this.config.prepareExtensionForLoad(abs, this.log);
+        // P3: MV3 с service_worker-фоном не работает в Electron 33 —
+        // предупреждаем в журнал и показываем в «Настройках».
+        const note = extensionManifestNote(abs);
+        if (note) this.log.warn(`${tag} ${note} (${source})`);
         try {
           const loaded = await ses.loadExtension(loadPath);
-          extensions.push({ source, name: loaded.name, id: loaded.id, ok: true, error: null });
+          extensions.push({ source, name: loaded.name, id: loaded.id, ok: true, error: null, note });
           this.log.info(`${tag} расширение загружено: ${loaded.name} (${source})`);
         } catch (err) {
-          extensions.push({ source, name: null, id: null, ok: false, error: String(err) });
+          extensions.push({ source, name: null, id: null, ok: false, error: String(err), note });
           this.log.error(`${tag} не удалось загрузить расширение (${source}): ${String(err)}`);
         }
       }
@@ -1148,6 +1300,8 @@ export class ProfileManager {
 
   /** Полная остановка: вызывается при закрытии окна (все сессии завершаются корректно). */
   destroyAll(): void {
+    // Ротация прокси больше не нужна: таймеры гасим ДО работы с views.
+    for (const id of [...this.rotationTimers.keys()]) this.stopRotationTimer(id);
     // Синхронизатор гасим ПЕРВЫМ: снимаем listener'ы с debugger'ов, пока
     // webContents ещё живы (урок P2.5: после close() их трогать нельзя).
     void this.inputSync.setEnabled(false, []);
@@ -1170,6 +1324,44 @@ function splitPaths(raw: string): string[] {
     .split(/[\n;]+/)
     .map((s) => s.trim())
     .filter((s) => s.length > 0);
+}
+
+/**
+ * Ротация мобильного прокси из полей формы: интервал «0»/пустое/мусор —
+ * выключено; URL провайдера — только http(s).
+ */
+function parseRotationInput(
+  intervalRaw: string | undefined,
+  urlRaw: string | undefined,
+): ProxyRotationConfig | undefined {
+  const n = Number.parseInt((intervalRaw ?? '').trim(), 10);
+  const intervalMin = Number.isFinite(n) ? Math.min(1440, Math.max(0, n)) : 0;
+  const url = (urlRaw ?? '').trim();
+  const rotationUrl = /^https?:\/\//i.test(url) ? url : undefined;
+  if (intervalMin < 1 && !rotationUrl) return undefined;
+  return { intervalMin, rotationUrl };
+}
+
+/**
+ * Предупреждение совместимости манифеста (P3): Electron 33 не запускает
+ * service_worker-фон расширений MV3 — после загрузки работают только
+ * content-скрипты. Возвращаемое сообщение показывается в «Настройках»
+ * и логируется при загрузке.
+ */
+function extensionManifestNote(abs: string): string | null {
+  try {
+    const raw = fs.readFileSync(path.join(abs, 'manifest.json'), 'utf8');
+    const m = JSON.parse(raw) as {
+      manifest_version?: number;
+      background?: { service_worker?: unknown };
+    };
+    if (m?.manifest_version === 3 && m.background?.service_worker) {
+      return 'MV3 service_worker: фон расширения не запускается в Electron 33 — работают только content-скрипты';
+    }
+  } catch {
+    /* битый manifest.json — свою ошибку даст ses.loadExtension */
+  }
+  return null;
 }
 
 function parsePositiveInt(raw?: string): number | undefined {

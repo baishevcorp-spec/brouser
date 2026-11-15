@@ -96,6 +96,10 @@ function bootstrap(): void {
 
     createWindow();
     registerIpc();
+    // Ротация мобильного прокси (P3): расписания всех профилей конфига.
+    // Тик сессии НЕ создаёт лишних объектов — сессии persistent, поднимаются
+    // с диска по partition при необходимости.
+    manager.startProxyRotation();
   });
 
   function createWindow(): void {
@@ -194,6 +198,14 @@ function bootstrap(): void {
     ipcMain.handle('profile:duplicate', (_e, id: string): Promise<CommandResult> =>
       manager!.duplicateProfile(id),
     );
+    // Drag-and-drop (P3): переставить профиль в другую ячейку. Сдвиг в
+    // config.profiles + recomputeLayout — представления переносятся без
+    // пересоздания (сессии, логины и вкладки живут).
+    ipcMain.handle(
+      'grid:reorder',
+      (_e, fromId: string, toIndex: number): Promise<CommandResult> =>
+        manager!.reorderProfiles(fromId, toIndex),
+    );
 
     // Импорт cookies (P3): текст cookies.txt/JSON -> сессия профиля.
     // Диалог импорта не модален: пока он открыт, профиль можно удалить из
@@ -268,6 +280,11 @@ function bootstrap(): void {
     // Синхронизатор действий (P3): реплей ввода между видимыми ячейками.
     ipcMain.handle('sync:set', (_e, on: boolean): Promise<CommandResult> =>
       manager!.setInputSync(!!on),
+    );
+
+    // Ротация мобильного прокси (P3): ручная смена IP профиля (триггер).
+    ipcMain.handle('profile:rotate-proxy', (_e, profileId: string): Promise<CommandResult> =>
+      manager!.rotateProxyNow(profileId),
     );
 
     ipcMain.handle('views:reload-all', (): void => manager!.reloadAll());

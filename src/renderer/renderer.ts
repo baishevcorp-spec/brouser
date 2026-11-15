@@ -49,6 +49,7 @@ document.addEventListener('DOMContentLoaded', () => {
   mountIcons();
   bindToolbar();
   bindTooltips();
+  bindGridDnd();
 
   // Геометрия из preload -> CSS-переменные (P1.1): отрисовка в renderer
   // и расчёт ячеек в main используют один источник констант.
@@ -217,7 +218,7 @@ function renderAll(): void {
   const visible = state.profiles.slice(0, cells);
   for (let i = 0; i < cells; i++) {
     const p = visible[i];
-    gridEl.appendChild(p ? buildCell(p) : buildEmptyCell());
+    gridEl.appendChild(p ? buildCell(p, i) : buildEmptyCell(i));
   }
 
   // Счётчик профилей/ячеек (rich-тултип — над сеткой, поверх views).
@@ -243,7 +244,7 @@ function renderAll(): void {
   updateRemoveBtn();
 }
 
-function buildCell(p: ProfileState): HTMLElement {
+function buildCell(p: ProfileState, cellIndex: number): HTMLElement {
   const cell = document.createElement('div');
   cell.className = 'cell' + (p.id === selectedId ? ' selected' : '');
 
@@ -251,6 +252,12 @@ function buildCell(p: ProfileState): HTMLElement {
   const head = document.createElement('div');
   head.className = 'cell-head';
   head.dataset.id = p.id;
+  // Drag-and-drop (P3): шапка — и ручка перетаскивания, и цель drop'а.
+  // Тело ячейки занято нативным WebContentsView (события туда не доходят),
+  // поэтому дроп-зоны — только шапки занятых ячеек и пустые ячейки целиком.
+  head.draggable = true;
+  head.dataset.cellIndex = String(cellIndex);
+  head.setAttribute('aria-grabbed', 'false');
   // Rich-тултип со сводкой профиля: динамические title+body (над views).
   head.dataset.tipTitle = p.name;
   head.dataset.tipBody = cellTooltip(p);
@@ -312,9 +319,10 @@ function buildCell(p: ProfileState): HTMLElement {
   return cell;
 }
 
-function buildEmptyCell(): HTMLElement {
+function buildEmptyCell(cellIndex: number): HTMLElement {
   const cell = document.createElement('div');
   cell.className = 'cell-empty';
+  cell.dataset.cellIndex = String(cellIndex);
   const btn = iconButton('plus', 'cell-empty-add', 'top');
   btn.addEventListener('click', () => {
     void api.openProfileForm().then((res) => {
@@ -337,10 +345,98 @@ function iconButton(icon: string, tipId: string, pos?: 'top'): HTMLButtonElement
   return btn;
 }
 
+// ------------------------------------------------------------------
+// Drag-and-drop профилей между ячейками (P3)
+// ------------------------------------------------------------------
+
+/**
+ * События DnD — делегированы на #grid (DOM пересобирается при каждом
+ * обновлении состояния). Дроп-зоны: шапки занятых ячеек (перетаскивание
+ * за шапку И дроп на шапку другой ячейки) и пустые ячейки целиком.
+ * Тело ячейки перекрыто нативным WebContentsView — события мыши оттуда
+ * в рендерер не приходят, поэтому тел дроп-зонами НЕ делаем.
+ */
+function bindGridDnd(): void {
+  /** Допустимая цель drop'а: шапка занятой ячейки либо пустая ячейка. */
+  const dropTarget = (t: EventTarget | null): HTMLElement | null => {
+    if (!(t instanceof Element)) return null;
+    const el =
+      t.closest<HTMLElement>('.cell-head[data-id]') ??
+      t.closest<HTMLElement>('.cell-empty');
+    return el ?? null;
+  };
+
+  const clearDragStyles = (): void => {
+    gridEl
+      .querySelectorAll('.dragging, .drop-target')
+      .forEach((el) => el.classList.remove('dragging', 'drop-target'));
+  };
+
+  gridEl.addEventListener('dragstart', (e) => {
+    const head = (e.target as HTMLElement).closest<HTMLElement>('.cell-head');
+    if (!head || !head.dataset.id || !e.dataTransfer) {
+      e.preventDefault(); // тянуть можно только шапку профиля
+      return;
+    }
+    e.dataTransfer.setData('text/plain', head.dataset.id);
+    e.dataTransfer.effectAllowed = 'move';
+    head.classList.add('dragging');
+    head.setAttribute('aria-grabbed', 'true');
+    // Тултип (окно поверх сетки) не должен висеть во время перетаскивания.
+    clearTimeout(tipTimer);
+    tipEl = null;
+    api.tooltipHide();
+  });
+
+  gridEl.addEventListener('dragend', () => {
+    clearDragStyles();
+    gridEl
+      .querySelectorAll('.cell-head[aria-grabbed]')
+      .forEach((el) => el.setAttribute('aria-grabbed', 'false'));
+  });
+
+  gridEl.addEventListener('dragover', (e) => {
+    const t = dropTarget(e.target);
+    if (!t) return; // вне дроп-зон — Chromium сам покажет «запрещено»
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+    const cur = gridEl.querySelector('.drop-target');
+    if (cur !== t) {
+      clearDragStyles();
+      t.classList.add('drop-target');
+    }
+  });
+
+  // Ушли из сетки совсем (в тулбар/за окно) — снять подсветку.
+  gridEl.addEventListener('dragleave', (e) => {
+    if (e.relatedTarget instanceof Node && gridEl.contains(e.relatedTarget)) return;
+    clearDragStyles();
+  });
+
+  gridEl.addEventListener('drop', (e) => {
+    const t = dropTarget(e.target);
+    const fromId = e.dataTransfer?.getData('text/plain');
+    e.preventDefault();
+    clearDragStyles();
+    if (!t || !fromId) return;
+    const toIndex = Number(t.dataset.cellIndex ?? '0');
+    if (!Number.isFinite(toIndex)) return;
+    void api.reorderProfiles(fromId, toIndex).then((res) => {
+      if (!res.ok) toast('err');
+    });
+  });
+}
+
 /** Сводка профиля для тела rich-тултипа шапки ячейки. */
 function cellTooltip(p: ProfileState): string {
   const parts = [p.url];
   if (p.hasProxy) parts.push(`прокси: ${p.proxyScheme ?? 'вкл'}`);
+  if (p.proxyRotation) {
+    const sched = p.proxyRotation.intervalMin > 0
+      ? `ротация IP: каждые ${p.proxyRotation.intervalMin} мин`
+      : 'ротация IP: вручную';
+    parts.push(sched);
+  }
   if (p.extensions.length > 0) {
     const okCount = p.extensions.filter((e) => e.ok).length;
     parts.push(`расширений: ${okCount}/${p.extensions.length}`);

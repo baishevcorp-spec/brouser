@@ -29,6 +29,18 @@
       <input id="f-proxy" type="text" placeholder="http://user:pass@host:port или socks5://host:port" autocomplete="off">
     </label>
 
+    <!-- Ротация мобильного прокси (P3): расписание автосмены + URL провайдера -->
+    <div class="file-row">
+      <label class="field grow">
+        <span class="field-label">Смена IP каждые N мин (0 — выкл)</span>
+        <input id="f-rotation" type="number" min="0" max="1440" step="1" placeholder="0" autocomplete="off">
+      </label>
+      <label class="field grow">
+        <span class="field-label">URL смены IP (необязательно)</span>
+        <input id="f-rotation-url" type="text" placeholder="http://gsm-provider/change-ip" autocomplete="off">
+      </label>
+    </div>
+
     <label class="field">
       <span class="field-label">Расширения</span>
       <textarea id="f-ext" rows="3" placeholder="Пути расширений, каждый с новой строки"></textarea>

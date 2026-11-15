@@ -8,7 +8,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { app } from 'electron';
-import { AppConfig, LayoutId, LAYOUTS, ProfileConfig, ThemeId, THEMES } from './types';
+import { AppConfig, LayoutId, LAYOUTS, ProfileConfig, ProxyRotationConfig, ThemeId, THEMES } from './types';
 import { Logger } from './logger';
 
 const DEFAULT_URL = 'https://www.avito.ru';
@@ -198,6 +198,9 @@ function normalizeProfile(raw: unknown): ProfileConfig | null {
     name: typeof p.name === 'string' && p.name.trim() ? p.name.trim() : id,
     url: normalizeUrlInput(typeof p.url === 'string' ? p.url : ''),
     proxy: typeof p.proxy === 'string' ? p.proxy.trim() : '',
+    // Ротация мобильного прокси (P3): битые значения отбрасываются —
+    // поле не должно блокировать загрузку профиля.
+    proxyRotation: normalizeRotation(p.proxyRotation),
     extensions: Array.isArray(p.extensions)
       ? p.extensions.filter((e): e is string => typeof e === 'string' && e.trim() !== '').map((e) => e.trim())
       : [],
@@ -240,4 +243,24 @@ function clampInt(v: unknown, min: number, max: number, fallback: number): numbe
   const n = typeof v === 'number' && Number.isFinite(v) ? Math.round(v) : NaN;
   if (Number.isNaN(n)) return fallback;
   return Math.min(max, Math.max(min, n));
+}
+
+/**
+ * Ротация мобильного прокси: интервал 1..1440 минут (0/битое — выкл),
+ * rotationUrl — только http(s) (защита от file:// и прочего мусора
+ * из рукоправленного config.json).
+ */
+function normalizeRotation(raw: unknown): ProxyRotationConfig | undefined {
+  if (typeof raw !== 'object' || raw === null) return undefined;
+  const r = raw as Record<string, unknown>;
+  const intervalRaw = typeof r.intervalMin === 'number' && Number.isFinite(r.intervalMin)
+    ? Math.floor(r.intervalMin)
+    : 0;
+  const intervalMin = Math.min(1440, Math.max(0, intervalRaw));
+  const url =
+    typeof r.rotationUrl === 'string' && r.rotationUrl.trim() && /^https?:\/\//i.test(r.rotationUrl.trim())
+      ? r.rotationUrl.trim()
+      : undefined;
+  if (intervalMin <= 0 && !url) return undefined;
+  return intervalMin > 0 ? { intervalMin, rotationUrl: url } : url ? { intervalMin: 0, rotationUrl: url } : undefined;
 }

@@ -42,6 +42,13 @@ export interface ProfileConfig {
   url: string;
   /** Прокси: http://user:pass@host:port или socks5://host:port. Пусто — прямое соединение. */
   proxy?: string;
+  /**
+   * Ротация мобильного прокси (P3): смена IP по расписанию и/или вручную.
+   * Работает и для паркованных (невидимых) профилей — сессия поднимается
+   * с диска по partition. Гео-эмуляция (таймзона/локаль/координаты) не
+   * трогается — «с сохранением гео».
+   */
+  proxyRotation?: ProxyRotationConfig;
   /** Пути к распакованным расширениям (относительные или абсолютные). */
   extensions?: string[];
   /** Свой User-Agent. Пусто/отсутствует — дефолтный UA Electron. */
@@ -79,6 +86,19 @@ export interface ProfileConfig {
   geolocation?: { latitude: number; longitude: number };
 }
 
+/**
+ * Настройки ротации мобильного прокси профиля (P3).
+ * Ротация = 1) GET на rotationUrl провайдера («сменить IP», если задан)
+ * + 2) перевзвод сессии на те же proxyRules — Chromium рвёт соединения
+ * и новые идут через новый IP. Креды прокси не трогаются (app('login')).
+ */
+export interface ProxyRotationConfig {
+  /** Интервал автосмены IP, минут (1..1440); 0/отсутствие — только вручную. */
+  intervalMin: number;
+  /** URL «сменить IP» у провайдера прокси (GET, таймаут 20 с), опционально. */
+  rotationUrl?: string;
+}
+
 /** Сохраняемые размеры окна (по ТЗ достаточно width/height). */
 export interface WindowBoundsSize {
   width: number;
@@ -110,6 +130,8 @@ export interface ProfileState {
   fingerprintSeed: number | null;
   /** Эффективная локаль профиля (явная либо выведенная из timezone). */
   locale: string | null;
+  /** Ротация мобильного прокси включена (интервал в минутах; null — выкл). */
+  proxyRotation: { intervalMin: number; hasUrl: boolean } | null;
   /** Попадает ли профиль в первые N ячеек текущей раскладки. */
   visible: boolean;
 }
@@ -183,6 +205,10 @@ export interface NewProfileInput {
   timezone?: string;
   platform?: string;
   hardwareConcurrency?: string;
+  /** Ротация мобильного прокси: интервал в минутах ('0'/пусто — выкл). */
+  rotationIntervalMin?: string;
+  /** URL «сменить IP» у провайдера прокси (необязательно). */
+  rotationUrl?: string;
 }
 
 /** Результат команд, возвращаемый в renderer. */
@@ -247,6 +273,8 @@ export interface ExtensionState {
   id: string | null;
   ok: boolean;
   error: string | null;
+  /** Предупреждение совместимости (например, MV3 service_worker — Electron 33). */
+  note: string | null;
 }
 
 /**
@@ -319,6 +347,8 @@ export interface SettingsDialogApi {
   removeExtension(profileId: string, source: string, reload: boolean): Promise<CommandResult>;
   /** Перечитать состояние (после изменений в главном окне). */
   reloadProfile(profileId: string): Promise<void>;
+  /** Ротация мобильного прокси (P3): сменить IP профиля сейчас (триггер). */
+  rotateProxy(profileId: string): Promise<CommandResult>;
   closeWindow(): void;
 }
 
@@ -347,6 +377,12 @@ export interface BrouserApi {
   removeProfile(id: string): Promise<CommandResult>;
   /** Дублировать профиль: настройки/прокси копируются, id и отпечаток — новые. */
   duplicateProfile(id: string): Promise<CommandResult>;
+  /**
+   * Drag-and-drop (P3): переставить профиль в другую ячейку — сдвигом в
+   * массиве config.profiles. Представления НЕ пересоздаются: recomputeLayout
+   * молча переносит живые view в новые ячейки (сессии/логины сохраняются).
+   */
+  reorderProfiles(fromId: string, toIndex: number): Promise<CommandResult>;
   /** Импорт cookies (Netscape/JSON) в сессию профиля (P3). */
   importCookies(profileId: string, input: CookieImportInput): Promise<CookieImportResult>;
   /** Диалог выбора файла cookies.txt/.json и его чтение (≤ 10 МБ). */

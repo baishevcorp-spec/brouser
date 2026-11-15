@@ -18,6 +18,7 @@ const api: SettingsDialogApi = {
   removeExtension: (profileId, source, reload) =>
     ipcRenderer.invoke('profile:remove-extension', profileId, source, reload),
   reloadProfile: (profileId) => ipcRenderer.invoke('view:reload', profileId),
+  rotateProxy: (profileId) => ipcRenderer.invoke('profile:rotate-proxy', profileId),
   closeWindow: () => ipcRenderer.send('dialog:close'),
 };
 

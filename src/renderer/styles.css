@@ -384,6 +384,29 @@ body.dialog [data-tip-pos='top']:focus-visible::after {
   min-width: 0;
 }
 
+/* ---------- Drag-and-drop профилей между ячейками (P3) ---------- */
+/* Тянем за шапку; дроп — на шапку другой ячейки или на пустую ячейку
+   (тело занято нативным WebContentsView, события туда не доходят). */
+.cell-head[draggable='true'] {
+  cursor: grab;
+}
+.cell-head[draggable='true']:active {
+  cursor: grabbing;
+}
+.cell-head.dragging {
+  opacity: 0.45;
+  border-color: var(--accent);
+}
+.cell-head.drop-target {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft), 0 0 10px var(--accent-soft);
+}
+.cell-empty.drop-target {
+  border-color: var(--accent);
+  border-style: solid;
+  box-shadow: 0 0 0 2px var(--accent-soft), 0 0 10px var(--accent-soft);
+}
+
 .cell-empty .ibtn {
   width: 44px;
   height: 44px;
@@ -586,6 +609,8 @@ body.dialog select {
 }
 .badge.ok { color: var(--ok); background: color-mix(in srgb, var(--ok) 12%, transparent); }
 .badge.err { color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, transparent); }
+/* Предупреждение совместимости (MV3 service_worker — Electron 33). */
+.badge.warn { color: #f59e0b; background: color-mix(in srgb, #f59e0b 12%, transparent); }
 #s-status { word-break: break-word; }
 #s-status.ok { color: var(--ok); }
 #s-status.err { color: var(--danger); }
