@@ -23,8 +23,8 @@ function check(name, cond, extra) {
   check('fallback: inline JSON + проза', r && r.calls.length === 1 && r.calls[0].name === 'list_profiles' && r.cleaned === 'Сейчас покажу.', r);
 }
 {
-  const r = parseToolCallsFromContent('```json\n{"name":"log_tail","arguments":{"limit":20,"level":"warn"}}\n```');
-  check('fallback: fenced JSON', r && r.calls[0].name === 'log_tail' && r.calls[0].args.limit === 20 && r.cleaned === '', r);
+  const r = parseToolCallsFromContent('```json\n{"name":"log_tail","arguments":{"profileName":"avito1","lines":30,"level":"warn"}}\n```');
+  check('fallback: fenced JSON', r && r.calls[0].name === 'log_tail' && r.calls[0].args.lines === 30 && r.calls[0].args.profileName === 'avito1' && r.cleaned === '', r);
 }
 {
   const r = parseToolCallsFromContent('Держи: {"name":"profile_details","arguments":"{\\"profile\\":\\"avito1\\"}"} и дальше текст');
@@ -68,7 +68,7 @@ check('resolve: active без выделения → отказ', !resolveProfil
 {
   const js = schemas.toJsonSchemaForModel(schemas.logTailSchema);
   const req = js.required || [];
-  check('schema: defaults не в required', !req.includes('limit') && !req.includes('level'), js);
+  check('schema: defaults не в required', !req.includes('lines') && !req.includes('level') && !req.includes('profileName'), js);
   check('schema: $schema убран', js.$schema === undefined, js);
   check('schema: enum присутствует', JSON.stringify(js).includes('"enum"'));
 }
@@ -77,9 +77,10 @@ check('resolve: active без выделения → отказ', !resolveProfil
   check('schema: layout обязателен', (js.required || []).includes('layout'), js);
 }
 {
-  // Валидация входа модели: пропущенные defaults подставляются.
+  // Валидация входа модели: пропущенные defaults подставляются (этап 3: 30 строк,
+  // profileName опционален).
   const parsed = schemas.logTailSchema.parse({});
-  check('zod: defaults применяются', parsed.limit === 20 && parsed.level === 'all', parsed);
+  check('zod: defaults применяются', parsed.lines === 30 && parsed.level === 'all' && parsed.profileName === undefined, parsed);
 }
 {
   let threw = false;

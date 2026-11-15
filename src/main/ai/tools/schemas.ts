@@ -73,15 +73,28 @@ export const rotateProxyIpSchema = z.object({
   profile: profileArg,
 });
 
-/** 11. log_tail — хвост журнала (кольцевой буфер 300 записей). */
+/**
+ * 11. log_tail — хвост журнала (кольцевой буфер 300 записей).
+ * Этап 3: фильтр по профилю (profileName резолвится через resolve.ts →
+ * тег [id] в строках журнала) + построчный кламп 150 символов
+ * (30 × 150 = 4,5 КБ — с запасом под общий лимит результата 8 КБ;
+ * глобальный кламп реестра остаётся страховкой для других тулов).
+ */
 export const logTailSchema = z.object({
-  limit: z
+  profileName: z
+    .string()
+    .trim()
+    .min(1)
+    .max(64)
+    .optional()
+    .describe('Имя или id профиля («active» = выделенная ячейка); не задан — общий журнал'),
+  lines: z
     .number()
     .int()
     .min(5)
     .max(50)
-    .default(20)
-    .describe('Сколько последних записей показать'),
+    .default(30)
+    .describe('Сколько последних записей показать (по умолчанию 30, максимум 50)'),
   level: z
     .enum(['all', 'info', 'warn', 'error'])
     .default('all')

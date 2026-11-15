@@ -1,5 +1,5 @@
 /**
- * Реестр тулов ассистента (P4, этап 2) — docs/assistant-stage0.md, №1–13.
+ * Реестр тулов ассистента (P4, этапы 2–3) — docs/assistant-stage0.md, №1–13.
  *
  * Каждый тул — обёртка над СУЩЕСТВУЮЩИМ методом ProfileManager/Logger:
  * ноль новых привилегий в main, ноль новых IPC-каналов. Аргументы
@@ -10,7 +10,9 @@
  *   - модель передаёт имя/id профиля строкой, id подставляет main
  *     (resolve.ts); промах → «профиль не найден» без деталей;
  *   - ответ модели-facing — компактный текст ≤ 8 КБ (clamp): без него
- *     ассистент захлёбывается контекстом и галлюцинирует;
+ *     ассистент захлёбывается контекстом и галлюцинирует; этап 3 —
+ *     построчный кламп 150 символов внутри log_tail (30 × 150 = 4,5 КБ),
+ *     глобальный кламп остаётся страховкой для остальных тулов;
  *   - profile_details отдаёт хост прокси, но НЕ креды; config.json
  *     целиком, cookies/пароли/ключи — не существуют для тулов;
  *   - UI получает карточку (title + ≤ 6 коротких строк), не JSON.
@@ -23,7 +25,7 @@ import type { Tool } from 'ollama';
 import { z } from 'zod';
 import type { ProfileManager } from '../../profileManager';
 import type { Logger } from '../../logger';
-import { LAYOUTS, LayoutId, ProfileState } from '../../types';
+import { LAYOUTS, LayoutId, LogEntry, ProfileState } from '../../types';
 import { resolveProfileArg } from './resolve';
 import { searchFaq } from './searchFaq';
 import { toJsonSchemaForModel } from './schemas';
@@ -355,21 +357,58 @@ function buildDefs(): ToolDef[] {
     },
     {
       name: 'log_tail',
-      description: 'Хвост журнала Brouser: последние ≤ 50 записей с уровнями info/warn/error, фильтр по уровню',
+      description:
+        'Хвост журнала: последние записи (по умолчанию 30, максимум 50), строки ≤ 150 символов; profileName — записи профиля + 5 общих строк контекста; level — фильтр по уровню',
       schema: logTailSchema,
       run: (args, ctx) => {
-        const limit = Number(args.limit ?? 20);
+        const lines = Number(args.lines ?? 30);
         const level = (args.level ?? 'all') as 'all' | 'info' | 'warn' | 'error';
         const all = ctx.log.getRecent(300);
         const filtered = level === 'all' ? all : all.filter((e) => e.level === level);
-        const take = filtered.slice(-limit);
+        // Кламп построчно и ДО склейки (этап 3): 30 × 150 = 4,5 КБ — с запасом
+        // под общий лимит 8 КБ; глобальный кламп остаётся страховкой.
+        const fmt = (e: LogEntry): string =>
+          `[${hhmmss(e.time)}] ${e.level.toUpperCase().padEnd(5)} ${e.message.slice(0, 150)}`;
+        const counts = (entries: LogEntry[]): string => {
+          const c: Record<string, number> = { info: 0, warn: 0, error: 0 };
+          for (const e of entries) c[e.level] = (c[e.level] ?? 0) + 1;
+          return `info ${c.info}, warn ${c.warn}, error ${c.error}`;
+        };
+
+        // Фильтр по профилю (этап 3): profileName → resolve → тег [id] в строках.
+        if (args.profileName !== undefined) {
+          const res = resolveProfileArg(args.profileName, resolvable(ctx), ctx.activeProfileId());
+          if (!res.ok) return profileMiss('log_tail', res.reason);
+          const tag = `[${res.profile.id}]`;
+          const own = filtered.filter((e) => e.message.includes(tag)).slice(-lines);
+          // Общий контекст: последние 5 строк БЕЗ фильтра профиля — ошибки
+          // приложения, не привязанные к профилю, но важные для диагностики.
+          const general = filtered.filter((e) => !e.message.includes(tag)).slice(-5);
+          const parts: string[] = [];
+          if (own.length === 0) {
+            parts.push(`записей профиля ${res.profile.name} в последних 300 нет (искали тег ${tag})`);
+          } else {
+            parts.push(`профиль ${res.profile.name}: последние ${own.length} записей (${counts(own)}):`);
+            parts.push(...own.map(fmt));
+          }
+          if (general.length > 0) {
+            parts.push(`— общий контекст (последние ${general.length} строк без фильтра профиля):`);
+            parts.push(...general.map(fmt));
+          }
+          return {
+            ok: true,
+            text: parts.join('\n'),
+            title: `Журнал ${res.profile.name}: ${own.length}`,
+            lines: own.slice(-3).map(fmt),
+          };
+        }
+
+        const take = filtered.slice(-lines);
         if (take.length === 0) {
           return { ok: true, text: 'журнал пуст (по этому фильтру записей нет)', title: 'Журнал: пусто', lines: [] };
         }
-        const counts = { info: 0, warn: 0, error: 0 } as Record<string, number>;
-        for (const e of take) counts[e.level] = (counts[e.level] ?? 0) + 1;
-        const header = `последние ${take.length} записей (info ${counts.info}, warn ${counts.warn}, error ${counts.error}):`;
-        const body = take.map((e) => `[${hhmmss(e.time)}] ${e.level.toUpperCase().padEnd(5)} ${e.message.slice(0, 200)}`);
+        const header = `последние ${take.length} записей (${counts(take)}):`;
+        const body = take.map(fmt);
         return {
           ok: true,
           text: clamp([header, ...body].join('\n')),
@@ -396,7 +435,8 @@ function buildDefs(): ToolDef[] {
     },
     {
       name: 'search_faq',
-      description: 'Поиск по документации проекта (README/BACKLOG/ROADMAP/docs) — вопросы «как работает фингерпринт», «как настроить ротацию»',
+      description:
+        'Поиск по документации проекта (README с разделом FAQ/BACKLOG/ROADMAP/docs): стеммер + синонимы связывают разговорные вопросы («как проверить фингерпринт», «что делать если крашится») с разделами документации',
       schema: searchFaqSchema,
       run: (args) => {
         const { hits, files } = searchFaq(String(args.query ?? ''));
